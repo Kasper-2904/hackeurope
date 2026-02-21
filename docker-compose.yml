@@ -24,7 +24,7 @@ services:
 
   agent-coder:
     build:
-      context: ./backend
+      context: .
       dockerfile: docker/agent/Dockerfile.coder
     container_name: hackeurope-agent-coder
     ports:
@@ -35,7 +35,7 @@ services:
 
   agent-reviewer:
     build:
-      context: ./backend
+      context: .
       dockerfile: docker/agent/Dockerfile.reviewer
     container_name: hackeurope-agent-reviewer
     ports:
@@ -46,7 +46,7 @@ services:
 
   agent-designer:
     build:
-      context: ./backend
+      context: .
       dockerfile: docker/agent/Dockerfile.designer
     container_name: hackeurope-agent-designer
     ports:

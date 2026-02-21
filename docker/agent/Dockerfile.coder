@@ -4,7 +4,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir mcp
 
-COPY src/agents ./agents
+COPY backend/src/agents ./agents
 
 ENV PYTHONPATH=/app
 
