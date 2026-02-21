@@ -1,33 +1,42 @@
 """Main FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import (
-    agents_router,
-    auth_router,
-    dashboard_router,
-    health_router,
-    plans_router,
-    projects_router,
-    reviewer_router,
-    risks_router,
-    subtasks_router,
-    tasks_router,
-    team_members_router,
-    teams_router,
-    users_router,
-)
+from src.api.agents import agents_router
+from src.api.users import auth_router, users_router
+from src.api.projects import projects_router, tasks_router
+from src.api.plans import plans_router
+from src.api.subtasks import subtasks_router
+from src.api.teams import teams_router, team_members_router
+from src.api.risks import risks_router, reviewer_router
+from src.api.dashboards import dashboard_router
 from src.api.github import github_router
 from src.api.marketplace import marketplace_router
 from src.api.billing import billing_router
+
 from src.config import get_settings
 from src.core.event_bus import get_event_bus
 from src.mcp_client.manager import get_mcp_manager
 from src.storage.database import init_db
+
+health_router = APIRouter(tags=["Health"])
+
+
+@health_router.get("/health")
+async def health_check() -> dict[str, str]:
+    """Health check endpoint."""
+    return {"status": "healthy"}
+
+
+@health_router.get("/agents/status")
+async def agents_status() -> dict[str, Any]:
+    """Get status of all connected agents."""
+    mcp_manager = get_mcp_manager()
+    return await mcp_manager.health_check()
 
 
 @asynccontextmanager
@@ -68,19 +77,6 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         description="""
         Multi-agent orchestration platform with MCP support.
-
-        ## Features
-
-        - **Agent Registration**: Register local agents (MCP servers) with the platform
-        - **Task Orchestration**: Create tasks and let the orchestrator delegate to agents
-        - **Team Management**: Organize agents into teams
-        - **MCP Integration**: Full MCP protocol support for tool calling and resource access
-
-        ## Architecture
-
-        This platform acts as an MCP Host that connects to multiple MCP Servers (agents).
-        Local agents run their own MCP servers and register with this platform.
-        The orchestrator can then delegate tasks to the appropriate agents.
         """,
         lifespan=lifespan,
     )
@@ -98,14 +94,12 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
-    app.include_router(teams_router, prefix="/api/v1")
     app.include_router(agents_router, prefix="/api/v1")
-    app.include_router(tasks_router, prefix="/api/v1")
-
-    # Add new routers
     app.include_router(projects_router, prefix="/api/v1")
+    app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(plans_router, prefix="/api/v1")
     app.include_router(subtasks_router, prefix="/api/v1")
+    app.include_router(teams_router, prefix="/api/v1")
     app.include_router(team_members_router, prefix="/api/v1")
     app.include_router(risks_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
@@ -119,7 +113,6 @@ def create_app() -> FastAPI:
 
 # Create the app instance
 app = create_app()
-
 
 if __name__ == "__main__":
     import uvicorn

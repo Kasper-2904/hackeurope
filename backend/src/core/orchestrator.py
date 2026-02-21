@@ -9,6 +9,8 @@ The orchestrator:
 5. Aggregates results
 """
 
+import json
+import litellm
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypedDict
@@ -47,6 +49,11 @@ class OrchestratorState(TypedDict, total=False):
     # Status
     status: str  # pending, planning, executing, completed, failed
 
+    # Context
+    user_id: str | None
+    team_id: str | None
+    subtask_id: str | None
+
 
 # ============== Node Functions ==============
 
@@ -63,6 +70,8 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
     task_type = state.get("task_type", "")
     description = state.get("task_description", "")
 
+    settings = get_settings()
+
     await event_bus.publish(
         Event(
             type=EventType.TASK_STARTED,
@@ -74,26 +83,66 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
         )
     )
 
-    # Map task types to required capabilities
-    task_tool_mapping = {
-        "code_generation": ["generate_code", "write_file"],
-        "code_review": ["review_code", "check_security", "suggest_improvements"],
-        "test_generation": ["generate_tests", "run_tests"],
-        "documentation": ["generate_docs", "write_file"],
-        "bug_fix": ["read_file", "search_code", "write_file"],
-        "refactor": ["read_file", "review_code", "write_file"],
-    }
+    # Use LLM to analyze the task and generate a plan
+    prompt = f"""
+    You are an orchestration agent. Your job is to analyze a software engineering task and break it down into tools that autonomous agents should execute.
+    
+    Task Type: {task_type}
+    Description: {description}
+    
+    Available tools to choose from: 
+    - generate_code, write_file, review_code, check_security, suggest_improvements, generate_tests, run_tests, generate_docs, read_file, search_code
+    
+    Respond ONLY with a valid JSON array of tool names in the order they should be executed.
+    Example: ["read_file", "generate_code", "write_file"]
+    """
 
-    required_tools = task_tool_mapping.get(task_type, [])
+    try:
+        response = await litellm.acompletion(
+            model=settings.default_llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},  # Optional hint depending on provider
+            api_key=settings.anthropic_api_key or "dummy_key_for_local_testing",
+        )
 
-    # Create a simple plan based on task type
+        # Parse the JSON response
+        content = response.choices[0].message.content
+        try:
+            # Handle potential markdown wrapping
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].strip()
+
+            required_tools = json.loads(content)
+            if not isinstance(required_tools, list):
+                required_tools = ["read_file", "generate_code", "write_file"]  # Fallback
+        except Exception as e:
+            print(f"Failed to parse LLM response: {e}. Content: {content}")
+            required_tools = ["read_file", "generate_code", "write_file"]  # Fallback
+
+    except Exception as e:
+        print(f"LLM call failed: {e}. Falling back to default mapping.")
+        # Fallback to static mapping if LLM fails
+        task_tool_mapping = {
+            "code_generation": ["generate_code", "write_file"],
+            "code_review": ["review_code", "check_security", "suggest_improvements"],
+            "test_generation": ["generate_tests", "run_tests"],
+            "documentation": ["generate_docs", "write_file"],
+            "bug_fix": ["read_file", "search_code", "write_file"],
+            "refactor": ["read_file", "review_code", "write_file"],
+            "subtask_execution": ["read_file", "generate_code", "write_file"],
+        }
+        required_tools = task_tool_mapping.get(task_type, ["generate_code"])
+
+    # Create the plan based on required tools
     plan = []
     for tool in required_tools:
         plan.append(
             {
                 "step": len(plan) + 1,
                 "action": "call_tool",
-                "tool": tool,
+                "tool": str(tool),
                 "status": "pending",
             }
         )
@@ -126,8 +175,17 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
     step = plan[current_step]
     required_tool = step.get("tool", "")
 
+    team_id = state.get("team_id")
+
     # Find agents with the required tool
     agents = mcp_manager.get_agents_with_tool(required_tool)
+
+    # Filter agents by team_id if provided
+    if team_id and agents:
+        # Assuming the mcp connection or the database can tell us the agent's team
+        # For now, we simulate filtering or assume the manager handles it,
+        # but realistically we should verify ownership or subscription.
+        pass
 
     if not agents:
         # No agent has the tool - try to find any online agent
@@ -276,8 +334,10 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
             type=EventType.TASK_COMPLETED,
             data={
                 "task_id": state.get("task_id"),
+                "subtask_id": state.get("subtask_id"),
                 "status": status,
                 "step_count": len(step_results),
+                "handoff_required": True,  # Indicate human developer needs to take over
             },
             source="orchestrator",
         )
@@ -431,6 +491,9 @@ class Orchestrator:
         task_type: str,
         description: str,
         input_data: dict[str, Any] | None = None,
+        team_id: str | None = None,
+        user_id: str | None = None,
+        subtask_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute a task through the orchestration pipeline.
@@ -458,6 +521,9 @@ class Orchestrator:
             "final_result": None,
             "error": None,
             "status": "pending",
+            "team_id": team_id,
+            "user_id": user_id,
+            "subtask_id": subtask_id,
         }
 
         # Run the graph

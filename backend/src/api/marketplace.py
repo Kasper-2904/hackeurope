@@ -8,7 +8,16 @@ from src.api.auth import get_current_user
 from src.storage.database import get_db
 from src.storage.models import User
 from src.services.marketplace_service import get_marketplace_service
-from src.api.schemas_marketplace import AgentPublishRequest, MarketplaceAgentResponse
+from src.api.schemas_marketplace import (
+    AgentPublishRequest,
+    MarketplaceAgentResponse,
+    AgentSubscribeRequest,
+    AgentSubscriptionResponse,
+)
+from src.storage.models import User, Team, MarketplaceAgent, AgentSubscription
+from src.core.state import SubscriptionStatus
+from sqlalchemy import select
+import uuid
 
 marketplace_router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
@@ -51,3 +60,58 @@ async def list_catalog(
     service = get_marketplace_service()
     agents = await service.list_public_agents(db=db, category=category)
     return agents
+
+
+@marketplace_router.post(
+    "/subscribe/{marketplace_agent_id}", response_model=AgentSubscriptionResponse
+)
+async def subscribe_to_agent(
+    marketplace_agent_id: str,
+    req: AgentSubscribeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Subscribe a team to a marketplace agent."""
+    # Verify team ownership
+    result = await db.execute(
+        select(Team).where(Team.id == req.team_id, Team.owner_id == current_user.id)
+    )
+    team = result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    # Verify agent exists
+    result = await db.execute(
+        select(MarketplaceAgent).where(MarketplaceAgent.id == marketplace_agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Marketplace agent not found"
+        )
+
+    # Check if already subscribed
+    result = await db.execute(
+        select(AgentSubscription).where(
+            AgentSubscription.team_id == req.team_id,
+            AgentSubscription.marketplace_agent_id == marketplace_agent_id,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team is already subscribed to this agent",
+        )
+
+    # Create subscription
+    sub = AgentSubscription(
+        id=str(uuid.uuid4()),
+        team_id=req.team_id,
+        marketplace_agent_id=marketplace_agent_id,
+        status=SubscriptionStatus.ACTIVE.value,
+    )
+    db.add(sub)
+    await db.commit()
+    await db.refresh(sub)
+    return sub

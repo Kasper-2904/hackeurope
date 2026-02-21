@@ -1,0 +1,187 @@
+"""Subtask routing endpoints."""
+
+from datetime import datetime
+from typing import Annotated, Any
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.api.auth import get_current_user
+from src.api.schemas import (
+    SubtaskCreate,
+    SubtaskDetail,
+    SubtaskFinalize,
+    SubtaskResponse,
+    SubtaskUpdate,
+)
+from src.core.state import SubtaskStatus, TaskStatus
+from src.core.orchestrator import get_orchestrator
+from src.storage.database import get_db
+from src.storage.models import AuditLog, Subtask, User, Task
+
+subtasks_router = APIRouter(prefix="/subtasks", tags=["Subtasks"])
+
+
+@subtasks_router.post("", response_model=SubtaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_subtask(
+    subtask_data: SubtaskCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Create a new subtask."""
+    subtask = Subtask(
+        id=str(uuid4()),
+        task_id=subtask_data.task_id,
+        plan_id=subtask_data.plan_id,
+        title=subtask_data.title,
+        description=subtask_data.description,
+        priority=subtask_data.priority,
+        assignee_id=subtask_data.assignee_id,
+        assigned_agent_id=subtask_data.assigned_agent_id,
+        status=SubtaskStatus.PENDING.value,
+    )
+    db.add(subtask)
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+@subtasks_router.get("/{subtask_id}", response_model=SubtaskDetail)
+async def get_subtask(
+    subtask_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Get subtask details."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    return subtask
+
+
+@subtasks_router.patch("/{subtask_id}", response_model=SubtaskResponse)
+async def update_subtask(
+    subtask_id: str,
+    update_data: SubtaskUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Update a subtask."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for field, value in update_dict.items():
+        if value is not None:
+            if field == "status":
+                setattr(subtask, field, value.value)
+            else:
+                setattr(subtask, field, value)
+
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+@subtasks_router.post("/{subtask_id}/finalize", response_model=SubtaskResponse)
+async def finalize_subtask(
+    subtask_id: str,
+    finalize_data: SubtaskFinalize,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Finalize a subtask with the final content."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    subtask.final_content = finalize_data.final_content
+    subtask.finalized_at = datetime.utcnow()
+    subtask.finalized_by_id = current_user.id
+    subtask.status = SubtaskStatus.FINALIZED.value
+
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="subtask_finalized",
+        resource_type="subtask",
+        resource_id=subtask_id,
+        details={"final_content": finalize_data.final_content},
+    )
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+async def _run_subtask_orchestration(
+    subtask_id: str, task_id: str, title: str, description: str, current_user_id: str
+):
+    """Background task to run the orchestrator for a specific subtask."""
+    try:
+        orchestrator = get_orchestrator()
+        await orchestrator.execute_task(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            task_type="subtask_execution",
+            description=f"{title}\n{description}",
+            user_id=current_user_id,
+        )
+    except Exception as e:
+        print(f"Error in background orchestration for subtask {subtask_id}: {e}")
+        # Ideally, we would update the subtask status to ERROR here using a new db session
+
+
+@subtasks_router.post("/{subtask_id}/dispatch", response_model=SubtaskResponse)
+async def dispatch_subtask(
+    subtask_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Dispatch a subtask to its assigned autonomous agent for drafting."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    if not subtask.assigned_agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subtask must have an assigned_agent_id before dispatching",
+        )
+
+    # Fetch parent task to pass to orchestrator
+    task_result = await db.execute(select(Task).where(Task.id == subtask.task_id))
+    parent_task = task_result.scalar_one_or_none()
+
+    # Update status to indicate agent is working on it
+    subtask.draft_agent_id = subtask.assigned_agent_id
+
+    await db.commit()
+    await db.refresh(subtask)
+
+    # Dispatch to orchestrator in background
+    background_tasks.add_task(
+        _run_subtask_orchestration,
+        subtask_id=subtask.id,
+        task_id=parent_task.id if parent_task else str(uuid4()),
+        title=subtask.title,
+        description=subtask.description or "",
+        current_user_id=current_user.id,
+    )
+
+    return subtask
