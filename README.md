@@ -20,6 +20,19 @@ A platform for software teams where a human PM collaborates with an Orchestratio
 - GitHub
 - Platform-hosted agent execution data
 
+## Docker Standard (Team)
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:5173`
+- Dummy agents:
+  - `http://localhost:8001`
+  - `http://localhost:8002`
+  - `http://localhost:8003`
+
+Run all services:
+```bash
+docker compose up --build
+```
+
 ## Core Workflow
 1. Task submitted by PM/developer.
 2. OA analyzes task + shared context and selects a specialist agent.

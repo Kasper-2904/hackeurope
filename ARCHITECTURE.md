@@ -99,3 +99,8 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 - `backend/` (FastAPI + LangGraph + SQLAlchemy + SQLite)
 - `docs/shared_context/` (Markdown state files)
 - `tests/`
+
+## Docker Runtime Ports (Standard)
+- Backend API: `8000`
+- Frontend: `5173`
+- Dummy agents: `8001`, `8002`, `8003` (extend with `8004+` as needed)

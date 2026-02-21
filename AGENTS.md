@@ -33,3 +33,8 @@ This file is the shared operating guide for our team of 4.
 - Unit tests are added/updated.
 - Relevant docs are updated.
 - CI is green.
+
+## Docker Ports (Team Standard)
+- Backend: `8000`
+- Frontend: `5173`
+- Dummy agents: `8001`, `8002`, `8003` (continue with `8004+` as needed)

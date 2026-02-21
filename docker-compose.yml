@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: hackeurope-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: hackeurope-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+
+  dummy-agent-1:
+    build:
+      context: ./docker/dummy-agent
+    container_name: hackeurope-dummy-agent-1
+    ports:
+      - "8001:8000"
+    environment:
+      - AGENT_NAME=dummy-agent-1
+      - AGENT_ROLE=code-agent
+
+  dummy-agent-2:
+    build:
+      context: ./docker/dummy-agent
+    container_name: hackeurope-dummy-agent-2
+    ports:
+      - "8002:8000"
+    environment:
+      - AGENT_NAME=dummy-agent-2
+      - AGENT_ROLE=review-agent
+
+  dummy-agent-3:
+    build:
+      context: ./docker/dummy-agent
+    container_name: hackeurope-dummy-agent-3
+    ports:
+      - "8003:8000"
+    environment:
+      - AGENT_NAME=dummy-agent-3
+      - AGENT_ROLE=test-agent
