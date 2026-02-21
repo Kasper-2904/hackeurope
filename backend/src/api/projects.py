@@ -57,8 +57,8 @@ async def list_projects(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[Project]:
-    """List projects owned by the current user."""
-    result = await db.execute(select(Project).where(Project.owner_id == current_user.id))
+    """List projects available in the current workspace."""
+    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
     return list(result.scalars().all())
 
 
