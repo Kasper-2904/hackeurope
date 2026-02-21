@@ -21,14 +21,14 @@
   - Adapter failures are retried and surfaced.
 
 ### M1-T3 Scaffold Frontend Repository (owner: Martin)
-- Status: Done
+- Status: In Progress
 - Description: Setup Vite + React + TypeScript + TailwindCSS environment.
 - Acceptance Criteria:
   - Frontend app runs locally on port 5173.
   - Proxy configured to `localhost:8000/api`.
 
 ### M1-T4 Shared UI Components & Auth Flow (owner: Marin)
-- Status: Done
+- Status: In Progress
 - Description: Build base UI shell, navigation, and Login/Register screens.
 - Acceptance Criteria:
   - User can register, login, and persist token in frontend state.
@@ -37,18 +37,23 @@
 ## Milestone 2: Orchestration & Workflows
 
 ### M2-T1 LangGraph Orchestrator & Reviewer API (owner: Kasper)
-- Status: Done
+- Status: In Progress
 - Description: Implement OA planning logic and Final Reviewer gate.
 - Acceptance Criteria:
   - OA generates plan with agent assignment.
   - Reviewer agent can process GitHub commits and flag risks.
 
 ### M2-T2 Agent Execution & PM Approval APIs (owner: Farhan)
-- Status: In Progress
-- Description: Build MCP Client connections, tool execution, and PM approval endpoints.
+- Status: Done
+- Description: Build hosted agent inference, tool execution, and PM approval endpoints.
 - Acceptance Criteria:
-  - PM can approve/reject plans.
-  - Tasks can be dispatched to agents via MCP.
+  - PM can approve/reject plans (with role verification).
+  - Tasks can be dispatched to agents via hosted inference.
+- Notes:
+  - PM role verification added to approve/reject endpoints
+  - Uses hosted inference (LiteLLM) instead of MCP protocol
+  - Skills loaded from markdown files (`src/skills/*.md`)
+  - Unit tests added for PM role verification (11 tests)
 
 ### M2-T3 Developer Dashboard UI (owner: Martin)
 - Status: In Progress
@@ -104,10 +109,14 @@
   - Audit logs cover all critical actions.
 
 ### M4-T2 Backend QA & Seed Scripts (owner: Kasper)
-- Status: Todo
+- Status: In Progress
 - Description: Write DB seeders for the demo and run integration tests.
 - Acceptance Criteria:
   - Demo scenario data is easily loadable via script.
+- Notes:
+  - Seed script fixed and working (`uv run python scripts/seed_agents.py`)
+  - Skills refactored to use markdown files in `src/skills/`
+  - Unit tests added for skills loading (15 tests passing)
 
 ### M4-T3 Context Explorer & Explainability UI (owner: Martin)
 - Status: Todo

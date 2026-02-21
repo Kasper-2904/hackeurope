@@ -10,6 +10,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
   frontend:
     build:
@@ -20,37 +21,4 @@ services:
     depends_on:
       - backend
     environment:
-      - VITE_API_BASE_URL=http://backend:8000
-
-  agent-coder:
-    build:
-      context: .
-      dockerfile: docker/agent/Dockerfile.coder
-    container_name: hackeurope-agent-coder
-    ports:
-      - "8001:8000"
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-
-  agent-reviewer:
-    build:
-      context: .
-      dockerfile: docker/agent/Dockerfile.reviewer
-    container_name: hackeurope-agent-reviewer
-    ports:
-      - "8002:8000"
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-
-  agent-designer:
-    build:
-      context: .
-      dockerfile: docker/agent/Dockerfile.designer
-    container_name: hackeurope-agent-designer
-    ports:
-      - "8003:8000"
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
+      - VITE_API_BASE_URL=http://localhost:8000
