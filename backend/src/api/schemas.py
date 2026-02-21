@@ -486,6 +486,19 @@ class DeveloperDashboardResponse(BaseModel):
     workload: float = 0.0
 
 
+class ProjectAllowedAgentResponse(BaseModel):
+    """Schema for project agent allowlist response."""
+
+    id: str
+    project_id: str
+    agent_id: str
+    added_by_id: str
+    created_at: datetime
+    agent: AgentResponse
+
+    model_config = {"from_attributes": True}
+
+
 class PMDashboardResponse(BaseModel):
     """Schema for PM dashboard response."""
 
@@ -494,8 +507,10 @@ class PMDashboardResponse(BaseModel):
     team_members: list[TeamMemberResponse] = Field(default_factory=list)
     tasks_by_status: dict[str, int] = Field(default_factory=dict)
     recent_plans: list[PlanResponse] = Field(default_factory=list)
+    pending_approvals: list[PlanResponse] = Field(default_factory=list)
     open_risks: list[RiskSignalResponse] = Field(default_factory=list)
     critical_alerts: list[RiskSignalResponse] = Field(default_factory=list)
+    allowed_agents: list["ProjectAllowedAgentResponse"] = Field(default_factory=list)
 
 
 # ============== Plan Submission Schema ==============

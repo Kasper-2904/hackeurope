@@ -3,7 +3,18 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.state import (
@@ -111,6 +122,9 @@ class Agent(Base):
 
     # Relationships
     tasks: Mapped[list["Task"]] = relationship("Task", back_populates="assigned_agent")
+    allowed_projects: Mapped[list["ProjectAllowedAgent"]] = relationship(
+        "ProjectAllowedAgent", back_populates="agent"
+    )
 
 
 class Task(Base):
@@ -198,6 +212,28 @@ class Project(Base):
     plans: Mapped[list["Plan"]] = relationship("Plan", back_populates="project")
     team_members: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="project")
     risk_signals: Mapped[list["RiskSignal"]] = relationship("RiskSignal", back_populates="project")
+    allowed_agents: Mapped[list["ProjectAllowedAgent"]] = relationship(
+        "ProjectAllowedAgent", back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectAllowedAgent(Base):
+    """Project-level allowlist mapping for agents."""
+
+    __tablename__ = "project_allowed_agents"
+    __table_args__ = (UniqueConstraint("project_id", "agent_id", name="uq_project_allowed_agent"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"))
+    project: Mapped["Project"] = relationship("Project", back_populates="allowed_agents")
+
+    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("agents.id"))
+    agent: Mapped["Agent"] = relationship("Agent", back_populates="allowed_projects")
+
+    added_by_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Plan(Base):

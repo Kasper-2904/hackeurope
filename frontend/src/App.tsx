@@ -11,6 +11,8 @@ import ContextExplorerPage from '@/pages/ContextExplorerPage'
 import { LoginPage } from '@/pages/LoginPage'
 import MarketplacePage from '@/pages/MarketplacePage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
+import ProjectDetailPage from '@/pages/ProjectDetailPage'
+import ProjectsPage from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
 import TaskListPage from '@/pages/TaskListPage'
@@ -38,8 +40,8 @@ function App() {
                   <Route path="/marketplace" element={<MarketplacePage />} />
                   <Route path="/marketplace/:agentId" element={<AgentDetailPage />} />
                   <Route path="/context" element={<ContextExplorerPage />} />
-                  <Route path="/projects" element={<div>Projects - Marin M2-T4</div>} />
-                  <Route path="/projects/:id" element={<div>Project Detail - Marin M2-T4</div>} />
+                  <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/projects/:id" element={<ProjectDetailPage />} />
                   <Route path="/billing" element={<div>Billing - Marin M3-T4</div>} />
                 </Route>
               </Route>

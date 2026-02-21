@@ -1,6 +1,6 @@
 """Plan routing endpoints."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -76,6 +76,15 @@ async def approve_plan(
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
+    project_result = await db.execute(
+        select(Project).where(Project.id == plan.project_id, Project.owner_id == current_user.id)
+    )
+    if not project_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project owner can approve this plan",
+        )
+
     if plan.status != PlanStatus.PENDING_PM_APPROVAL.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -84,7 +93,7 @@ async def approve_plan(
 
     plan.status = PlanStatus.APPROVED.value
     plan.approved_by_id = current_user.id
-    plan.approved_at = datetime.utcnow()
+    plan.approved_at = datetime.now(UTC)
 
     # Create audit log
     audit = AuditLog(
@@ -117,6 +126,15 @@ async def reject_plan(
 
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    project_result = await db.execute(
+        select(Project).where(Project.id == plan.project_id, Project.owner_id == current_user.id)
+    )
+    if not project_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project owner can reject this plan",
+        )
 
     if plan.status != PlanStatus.PENDING_PM_APPROVAL.value:
         raise HTTPException(

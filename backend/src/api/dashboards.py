@@ -3,16 +3,27 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.api.auth import get_current_user
 from src.api.schemas import (
     DeveloperDashboardResponse,
     PMDashboardResponse,
 )
+from src.core.state import PlanStatus
 from src.storage.database import get_db
-from src.storage.models import Plan, Project, RiskSignal, Subtask, Task, TeamMember, User
+from src.storage.models import (
+    Plan,
+    Project,
+    ProjectAllowedAgent,
+    RiskSignal,
+    Subtask,
+    Task,
+    TeamMember,
+    User,
+)
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboards"])
 
@@ -40,10 +51,39 @@ async def pm_dashboard(
     team_members = list(members_result.scalars().all())
 
     # Get tasks by status (tasks linked to project via plans)
+    task_status_counts_result = await db.execute(
+        select(Task.status, func.count(func.distinct(Task.id)))
+        .join(Plan, Plan.task_id == Task.id)
+        .where(Plan.project_id == project_id)
+        .group_by(Task.status)
+    )
+    tasks_by_status = {
+        status.value if hasattr(status, "value") else str(status): count
+        for status, count in task_status_counts_result.all()
+    }
+
     plans_result = await db.execute(
         select(Plan).where(Plan.project_id == project_id).order_by(Plan.created_at.desc()).limit(10)
     )
     recent_plans = list(plans_result.scalars().all())
+
+    pending_plans_result = await db.execute(
+        select(Plan)
+        .where(
+            Plan.project_id == project_id,
+            Plan.status == PlanStatus.PENDING_PM_APPROVAL.value,
+        )
+        .order_by(Plan.created_at.asc())
+    )
+    pending_approvals = list(pending_plans_result.scalars().all())
+
+    allowed_agents_result = await db.execute(
+        select(ProjectAllowedAgent)
+        .options(selectinload(ProjectAllowedAgent.agent))
+        .where(ProjectAllowedAgent.project_id == project_id)
+        .order_by(ProjectAllowedAgent.created_at.desc())
+    )
+    allowed_agents = list(allowed_agents_result.scalars().all())
 
     # Get open risks
     risks_result = await db.execute(
@@ -67,10 +107,12 @@ async def pm_dashboard(
         "project_id": project_id,
         "project": project,
         "team_members": team_members,
-        "tasks_by_status": {},  # TODO: Aggregate from tasks linked to project
+        "tasks_by_status": tasks_by_status,
         "recent_plans": recent_plans,
+        "pending_approvals": pending_approvals,
         "open_risks": open_risks,
         "critical_alerts": critical_alerts,
+        "allowed_agents": allowed_agents,
     }
 
 
