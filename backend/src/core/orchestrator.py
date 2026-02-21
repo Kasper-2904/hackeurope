@@ -15,6 +15,7 @@ from uuid import uuid4
 from langgraph.graph import END, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import PlanStatus
 from src.services.context_service import SharedContextService
@@ -46,6 +47,11 @@ class OrchestratorState(TypedDict, total=False):
     # Status
     status: str  # pending, gathering_context, planning, persisted, failed
     error: str | None
+
+    # Context
+    user_id: str | None
+    team_id: str | None
+    subtask_id: str | None
 
 
 # ============== Node Functions ==============

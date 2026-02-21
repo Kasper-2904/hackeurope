@@ -28,6 +28,19 @@ class MarketplaceAgentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AgentSubscribeRequest(BaseModel):
+    team_id: str
+
+
+class AgentSubscriptionResponse(BaseModel):
+    id: str
+    team_id: str
+    marketplace_agent_id: str
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
 class SubscriptionCreateRequest(BaseModel):
     team_id: str
     success_url: str

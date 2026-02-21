@@ -41,9 +41,9 @@ The platform merges data from:
 1. Task is submitted (PM or developer).
 2. OA analyzes task + shared context.
 3. OA selects a specialist agent (not a person) to execute the task draft.
-4. Specialist agent produces a 70% draft (real code/research/output).
-5. OA provides draft + suggested team-member assignment for PM review.
-6. PM approves assignment or reassigns to a different team member.
+4. OA provides execution plan + suggested team-member assignment for PM review.
+5. PM approves assignment/plan or reassigns to a different team member.
+6. Specialist agent produces a 70% draft (real code/research/output).
 7. Assigned team member completes the final 30% and commits to GitHub.
 8. GitHub commit is detected; Reviewer Agent analyzes consistency/conflicts and updates shared context.
 9. Project context is enriched from outcomes so future agent runs improve.

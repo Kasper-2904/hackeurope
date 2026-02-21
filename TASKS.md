@@ -7,7 +7,7 @@
 ## Milestone 1: Core Setup & Context
 
 ### M1-T1 Core Backend Models & Auth API (owner: Farhan)
-- Status: In Progress
+- Status: Done
 - Description: Setup SQLite database, core models (Users, Teams, Projects, Tasks), and JWT Auth APIs.
 - Acceptance Criteria:
   - Database is initialized.
@@ -44,7 +44,7 @@
   - Reviewer agent can process GitHub commits and flag risks.
 
 ### M2-T2 Agent Execution & PM Approval APIs (owner: Farhan)
-- Status: In Progress
+- Status: Done
 - Description: Build MCP Client connections, tool execution, and PM approval endpoints.
 - Acceptance Criteria:
   - PM can approve/reject plans.
