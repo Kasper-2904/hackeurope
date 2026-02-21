@@ -33,6 +33,11 @@ class EventType(str, Enum):
     MCP_TOOL_RESULT = "mcp.tool_result"
     MCP_RESOURCE_READ = "mcp.resource_read"
 
+    # GitHub ingestion events
+    GITHUB_SYNC_STARTED = "github.sync_started"
+    GITHUB_SYNC_COMPLETED = "github.sync_completed"
+    GITHUB_SYNC_FAILED = "github.sync_failed"
+
     # System events
     SYSTEM_ERROR = "system.error"
     SYSTEM_WARNING = "system.warning"

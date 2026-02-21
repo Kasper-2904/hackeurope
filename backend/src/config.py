@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Event Bus
     event_bus_max_queue_size: int = 1000
 
+    # GitHub Integration
+    github_token: str | None = None
+    github_api_base_url: str = "https://api.github.com"
+
     # Marketplace & Billing
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""

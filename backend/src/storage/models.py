@@ -474,6 +474,33 @@ class AgentSubscription(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class GitHubContext(Base):
+    """Cached GitHub data for a project (PRs, commits, CI status)."""
+
+    __tablename__ = "github_contexts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Project reference
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), unique=True)
+    project: Mapped["Project"] = relationship("Project")
+
+    # Cached GitHub data
+    pull_requests: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    recent_commits: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    ci_status: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+    # Sync metadata
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), nullable=True
+    )
+
+
 class UsageRecord(Base):
     """Tracks agent usage for billing purposes."""
 

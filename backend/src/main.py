@@ -21,6 +21,7 @@ from src.api.routes import (
     teams_router,
     users_router,
 )
+from src.api.github import github_router
 from src.api.marketplace import marketplace_router
 from src.api.billing import billing_router
 from src.config import get_settings
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(risks_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
     app.include_router(reviewer_router, prefix="/api/v1")
+    app.include_router(github_router, prefix="/api/v1")
     app.include_router(marketplace_router, prefix="/api/v1")
     app.include_router(billing_router, prefix="/api/v1")
 
