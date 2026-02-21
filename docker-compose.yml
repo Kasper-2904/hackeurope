@@ -22,32 +22,35 @@ services:
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
 
-  dummy-agent-1:
+  agent-coder:
     build:
-      context: ./docker/dummy-agent
-    container_name: hackeurope-dummy-agent-1
+      context: ./backend
+      dockerfile: docker/agent/Dockerfile.coder
+    container_name: hackeurope-agent-coder
     ports:
       - "8001:8000"
     environment:
-      - AGENT_NAME=dummy-agent-1
-      - AGENT_ROLE=code-agent
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
 
-  dummy-agent-2:
+  agent-reviewer:
     build:
-      context: ./docker/dummy-agent
-    container_name: hackeurope-dummy-agent-2
+      context: ./backend
+      dockerfile: docker/agent/Dockerfile.reviewer
+    container_name: hackeurope-agent-reviewer
     ports:
       - "8002:8000"
     environment:
-      - AGENT_NAME=dummy-agent-2
-      - AGENT_ROLE=review-agent
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
 
-  dummy-agent-3:
+  agent-designer:
     build:
-      context: ./docker/dummy-agent
-    container_name: hackeurope-dummy-agent-3
+      context: ./backend
+      dockerfile: docker/agent/Dockerfile.designer
+    container_name: hackeurope-agent-designer
     ports:
       - "8003:8000"
     environment:
-      - AGENT_NAME=dummy-agent-3
-      - AGENT_ROLE=test-agent
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
