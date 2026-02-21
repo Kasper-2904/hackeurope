@@ -23,7 +23,18 @@ describe("TaskListPage", () => {
     expect(screen.getByText("Loading tasks...")).toBeInTheDocument();
   });
 
-  it("renders task rows after loading", async () => {
+  it("renders kanban column headers", async () => {
+    renderWithProviders();
+    await waitFor(() => {
+      expect(screen.getByText("Tasks")).toBeInTheDocument();
+    });
+    // Status badges serve as column headers
+    expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("In Progress").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+  });
+
+  it("renders task cards after loading", async () => {
     renderWithProviders();
     await waitFor(() => {
       expect(screen.getByText("Set up user authentication API")).toBeInTheDocument();
@@ -31,26 +42,12 @@ describe("TaskListPage", () => {
     expect(screen.getByText("Build GitHub ingestion adapter")).toBeInTheDocument();
   });
 
-  it("renders the Tasks heading", async () => {
+  it("shows task descriptions on cards", async () => {
     renderWithProviders();
     await waitFor(() => {
-      expect(screen.getByText("Tasks")).toBeInTheDocument();
-    });
-  });
-
-  it("renders status badges for tasks", async () => {
-    renderWithProviders();
-    await waitFor(() => {
-      expect(screen.getByText("Completed")).toBeInTheDocument();
-    });
-    // Multiple tasks may have "In Progress" status, so use getAllByText
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThan(0);
-  });
-
-  it("renders the status filter dropdown", async () => {
-    renderWithProviders();
-    await waitFor(() => {
-      expect(screen.getByText("All Statuses")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Implement JWT auth endpoints/)
+      ).toBeInTheDocument();
     });
   });
 });

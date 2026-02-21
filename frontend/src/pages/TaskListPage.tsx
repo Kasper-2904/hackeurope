@@ -1,47 +1,25 @@
-// TaskListPage — shows all tasks in a filterable table.
-// Click a row to navigate to the task detail page.
+// TaskListPage — Kanban board showing tasks grouped by status.
+// Click a card to navigate to the task detail page.
 
-import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ProgressBar } from "@/components/shared/ProgressBar";
 import { useTasks } from "@/hooks/use-api";
 import { TaskStatus } from "@/lib/types";
 
-const statusOptions = [
-  { value: "all", label: "All Statuses" },
-  { value: TaskStatus.PENDING, label: "Pending" },
-  { value: TaskStatus.ASSIGNED, label: "Assigned" },
-  { value: TaskStatus.IN_PROGRESS, label: "In Progress" },
-  { value: TaskStatus.COMPLETED, label: "Completed" },
-  { value: TaskStatus.FAILED, label: "Failed" },
-  { value: TaskStatus.CANCELLED, label: "Cancelled" },
+const columns = [
+  { status: TaskStatus.PENDING, label: "Pending" },
+  { status: TaskStatus.ASSIGNED, label: "Assigned" },
+  { status: TaskStatus.IN_PROGRESS, label: "In Progress" },
+  { status: TaskStatus.COMPLETED, label: "Completed" },
+  { status: TaskStatus.FAILED, label: "Failed" },
+  { status: TaskStatus.CANCELLED, label: "Cancelled" },
 ];
 
 export default function TaskListPage() {
   const { data: tasks, isLoading } = useTasks();
-  const [statusFilter, setStatusFilter] = useState("all");
   const navigate = useNavigate();
-
-  const filteredTasks =
-    statusFilter === "all"
-      ? tasks
-      : tasks?.filter((t) => t.status === statusFilter);
 
   if (isLoading) {
     return <div className="text-sm text-slate-500">Loading tasks...</div>;
@@ -49,70 +27,61 @@ export default function TaskListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Tasks</h2>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {statusOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <h2 className="text-xl font-semibold">Tasks</h2>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Task</TableHead>
-              <TableHead className="w-[120px]">Status</TableHead>
-              <TableHead className="w-[140px]">Agent</TableHead>
-              <TableHead className="w-[160px]">Progress</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredTasks && filteredTasks.length > 0 ? (
-              filteredTasks.map((task) => (
-                <TableRow
-                  key={task.id}
-                  className="cursor-pointer hover:bg-slate-50"
-                  onClick={() => navigate(`/tasks/${task.id}`)}
-                >
-                  <TableCell>
-                    <div>
-                      <div className="font-medium">{task.title}</div>
-                      {task.description && (
-                        <div className="text-xs text-slate-500 mt-0.5 truncate max-w-md">
-                          {task.description}
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {columns.map((col) => {
+          const columnTasks = tasks?.filter((t) => t.status === col.status) ?? [];
+
+          return (
+            <div
+              key={col.status}
+              className="flex-shrink-0 w-[260px]"
+            >
+              {/* Column header */}
+              <div className="flex items-center justify-between mb-3 px-1">
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={col.status} />
+                  <span className="text-xs text-slate-500">{columnTasks.length}</span>
+                </div>
+              </div>
+
+              {/* Column body */}
+              <div className="space-y-3 min-h-[200px] rounded-lg bg-slate-50 p-3">
+                {columnTasks.length > 0 ? (
+                  columnTasks.map((task) => (
+                    <Card
+                      key={task.id}
+                      className="cursor-pointer transition hover:shadow-md hover:border-slate-300"
+                      onClick={() => navigate(`/tasks/${task.id}`)}
+                    >
+                      <CardContent className="p-3 space-y-2">
+                        <div className="font-medium text-sm leading-tight">
+                          {task.title}
                         </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={task.status} />
-                  </TableCell>
-                  <TableCell className="text-sm text-slate-600">
-                    {task.assigned_agent_id ?? "—"}
-                  </TableCell>
-                  <TableCell>
-                    <ProgressBar value={task.progress} />
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-slate-400 py-8">
-                  No tasks found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                        {task.description && (
+                          <p className="text-xs text-slate-500 line-clamp-2">
+                            {task.description}
+                          </p>
+                        )}
+                        <ProgressBar value={task.progress} />
+                        {task.assigned_agent_id && (
+                          <div className="text-xs text-slate-400">
+                            {task.assigned_agent_id}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <div className="text-xs text-slate-400 text-center py-8">
+                    No tasks
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
