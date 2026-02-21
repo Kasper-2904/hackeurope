@@ -6,10 +6,12 @@
 // - It returns { data, isLoading, error } that components can use
 // - When the real backend is ready, we just change the fetch functions
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getAgent,
   getAgents,
+  getMarketplaceAgent,
+  getMarketplaceCatalog,
   getPlans,
   getProject,
   getRiskSignals,
@@ -17,6 +19,7 @@ import {
   getTask,
   getTasks,
   getTeamMembers,
+  publishAgent,
 } from "@/mocks/api";
 
 export function useTasks() {
@@ -78,5 +81,30 @@ export function useAgent(id: string) {
     queryKey: ["agent", id],
     queryFn: () => getAgent(id),
     enabled: !!id,
+  });
+}
+
+export function useMarketplaceCatalog(category?: string) {
+  return useQuery({
+    queryKey: ["marketplace", category],
+    queryFn: () => getMarketplaceCatalog(category),
+  });
+}
+
+export function useMarketplaceAgent(id: string) {
+  return useQuery({
+    queryKey: ["marketplaceAgent", id],
+    queryFn: () => getMarketplaceAgent(id),
+    enabled: !!id,
+  });
+}
+
+export function usePublishAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: publishAgent,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+    },
   });
 }

@@ -118,9 +118,33 @@ export async function getMarketplaceCatalog(
 
 export async function getMarketplaceAgent(
   id: string
-): Promise<MarketplaceAgent | undefined> {
+): Promise<MarketplaceAgent | null> {
   await delay();
-  return mockMarketplaceAgents.find((a) => a.id === id);
+  return mockMarketplaceAgents.find((a) => a.id === id) ?? null;
+}
+
+export async function publishAgent(data: {
+  name: string;
+  category: string;
+  description: string;
+  pricing_type: string;
+  price_per_use: number | null;
+}): Promise<MarketplaceAgent> {
+  await delay();
+  const newAgent: MarketplaceAgent = {
+    id: `mp-${Date.now()}`,
+    agent_id: `agent-${Date.now()}`,
+    seller_id: "user-1",
+    name: data.name,
+    category: data.category,
+    description: data.description,
+    pricing_type: data.pricing_type as MarketplaceAgent["pricing_type"],
+    price_per_use: data.price_per_use,
+    is_verified: false,
+    is_active: true,
+  };
+  mockMarketplaceAgents.push(newAgent);
+  return newAgent;
 }
 
 // ---- Dashboard ----
