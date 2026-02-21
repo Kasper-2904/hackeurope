@@ -57,15 +57,13 @@ async def list_projects(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[Project]:
-    """List projects the user owns or is a member of."""
-    # Get project IDs where user is a team member
-    member_project_ids = select(TeamMember.project_id).where(TeamMember.user_id == current_user.id)
+    """List all projects visible to the authenticated user.
 
-    # Get projects user owns OR is a member of
+    Returns all workspace projects — any authenticated user can see
+    every project in the workspace.
+    """
     result = await db.execute(
-        select(Project)
-        .where((Project.owner_id == current_user.id) | (Project.id.in_(member_project_ids)))
-        .order_by(Project.created_at.desc())
+        select(Project).order_by(Project.created_at.desc())
     )
     return list(result.scalars().all())
 

@@ -104,7 +104,7 @@ class MarketplaceService:
         return marketplace_agent
 
     @staticmethod
-    async def list_public_agents(db: AsyncSession, category: Optional[str] = None) -> List[dict]:
+    async def list_public_agents(db: AsyncSession, category: Optional[str] = None) -> List[MarketplaceAgent]:
         query = (
             select(MarketplaceAgent)
             .options(
@@ -119,29 +119,18 @@ class MarketplaceService:
         result = await db.execute(query)
         agents = list(result.scalars().all())
 
-        # Add seller_name to each agent
-        return [
-            {
-                "id": agent.id,
-                "agent_id": agent.agent_id,
-                "seller_id": agent.seller_id,
-                "seller_name": agent.seller.full_name or agent.seller.username
+        # Set seller_name on each agent for serialization
+        for agent in agents:
+            agent.seller_name = (
+                agent.seller.full_name or agent.seller.username
                 if agent.seller
-                else None,
-                "name": agent.name,
-                "category": agent.category,
-                "description": agent.description,
-                "pricing_type": agent.pricing_type,
-                "price_per_use": agent.price_per_use,
-                "is_verified": agent.is_verified,
-                "is_active": agent.is_active,
-                "agent": agent.agent,
-            }
-            for agent in agents
-        ]
+                else None
+            )
+
+        return agents
 
     @staticmethod
-    async def get_marketplace_agent(db: AsyncSession, marketplace_agent_id: str) -> Optional[dict]:
+    async def get_marketplace_agent(db: AsyncSession, marketplace_agent_id: str) -> Optional[MarketplaceAgent]:
         """Get a single marketplace agent with its linked agent details."""
         query = (
             select(MarketplaceAgent)
@@ -157,22 +146,14 @@ class MarketplaceService:
         if not agent:
             return None
 
-        return {
-            "id": agent.id,
-            "agent_id": agent.agent_id,
-            "seller_id": agent.seller_id,
-            "seller_name": agent.seller.full_name or agent.seller.username
+        # Set seller_name for serialization
+        agent.seller_name = (
+            agent.seller.full_name or agent.seller.username
             if agent.seller
-            else None,
-            "name": agent.name,
-            "category": agent.category,
-            "description": agent.description,
-            "pricing_type": agent.pricing_type,
-            "price_per_use": agent.price_per_use,
-            "is_verified": agent.is_verified,
-            "is_active": agent.is_active,
-            "agent": agent.agent,
-        }
+            else None
+        )
+
+        return agent
 
 
 def get_marketplace_service() -> MarketplaceService:
