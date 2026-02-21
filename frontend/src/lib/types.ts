@@ -248,6 +248,17 @@ export interface PMDashboard {
   team_members: TeamMember[];
   tasks_by_status: Record<string, number>;
   recent_plans: Plan[];
+  pending_approvals: Plan[];
   open_risks: RiskSignal[];
   critical_alerts: RiskSignal[];
+  allowed_agents: ProjectAllowedAgent[];
+}
+
+export interface ProjectAllowedAgent {
+  id: string;
+  project_id: string;
+  agent_id: string;
+  added_by_id: string;
+  created_at: string;
+  agent: Agent;
 }

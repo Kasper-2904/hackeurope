@@ -63,8 +63,9 @@
   - Developer can finalize a draft.
 
 ### M2-T4 PM Dashboard UI (owner: Marin)
-- Status: In Progress
+- Status: Done
 - Description: Build PM view with goals, team progress, and approval gates.
+- Notes: 2026-02-21 - M2-T4-ST1 through M2-T4-ST6 implemented (PM routes/pages, project allowlist backend+frontend flows, PM approval/rejection interactions with loading/error/empty states). M2-T4-ST7 and M2-T4-ST8 tests are now added (backend allowlist + plan action coverage, frontend PM dashboard interaction/state coverage). M2-T4-ST9 quality gates pass with local commands (`cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`).
 - Acceptance Criteria:
   - PM can manage project agent allowlist.
   - PM can review and approve OA plans.

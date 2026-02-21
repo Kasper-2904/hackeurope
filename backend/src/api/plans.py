@@ -1,6 +1,6 @@
 """Plan routing endpoints."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -87,7 +87,7 @@ async def approve_plan(
 
     plan.status = PlanStatus.APPROVED.value
     plan.approved_by_id = current_user.id
-    plan.approved_at = datetime.utcnow()
+    plan.approved_at = datetime.now(UTC)
 
     # Create audit log
     audit = AuditLog(
