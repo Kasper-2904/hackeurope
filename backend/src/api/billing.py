@@ -1,14 +1,18 @@
 """Billing and monetization API routes."""
 
-from typing import Annotated
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
+from src.api.schemas_marketplace import SellerOnboardRequest, SubscriptionCreateRequest
+from src.config import get_settings
 from src.core.state import PricingType, SubscriptionStatus
+from src.services.stripe_service import get_stripe_service
 from src.storage.database import get_db
 from src.storage.models import (
     AgentSubscription,
@@ -16,9 +20,8 @@ from src.storage.models import (
     SellerProfile,
     Team,
     User,
+    UsageRecord,
 )
-from src.services.stripe_service import get_stripe_service
-from src.api.schemas_marketplace import SubscriptionCreateRequest, SellerOnboardRequest
 
 billing_router = APIRouter(prefix="/billing", tags=["Billing"])
 
@@ -262,6 +265,74 @@ async def get_seller_status(
         "stripe_connected": bool(seller_profile.stripe_account_id),
         "payout_enabled": seller_profile.payout_enabled,
         "total_earnings": seller_profile.total_earnings,
+    }
+
+
+# ============== Usage Metering (Paid.ai) ==============
+
+
+@billing_router.get("/usage")
+async def get_usage(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    team_id: str | None = None,
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Get usage records for the current user's teams."""
+    if team_id:
+        team_result = await db.execute(
+            select(Team).where(Team.id == team_id, Team.owner_id == current_user.id)
+        )
+        if not team_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+        team_ids = [team_id]
+    else:
+        teams_result = await db.execute(
+            select(Team.id).where(Team.owner_id == current_user.id)
+        )
+        team_ids = [row[0] for row in teams_result.all()]
+        team_ids.append(f"user_{current_user.id}")
+
+    if not team_ids:
+        return {"records": [], "total_count": 0, "total_cost": 0.0, "today_count": 0, "daily_limit": 0}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    result = await db.execute(
+        select(UsageRecord)
+        .where(UsageRecord.team_id.in_(team_ids), UsageRecord.created_at >= cutoff)
+        .order_by(UsageRecord.created_at.desc())
+        .limit(500)
+    )
+    records = result.scalars().all()
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_result = await db.execute(
+        select(func.count(UsageRecord.id)).where(
+            UsageRecord.team_id.in_(team_ids),
+            UsageRecord.created_at >= today_start,
+        )
+    )
+    today_count = today_result.scalar() or 0
+
+    settings = get_settings()
+
+    return {
+        "records": [
+            {
+                "id": r.id,
+                "team_id": r.team_id,
+                "usage_type": r.usage_type,
+                "quantity": r.quantity,
+                "cost": r.cost,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ],
+        "records_returned": len(records),
+        "total_cost": sum(r.cost for r in records),
+        "today_count": today_count,
+        "daily_limit": settings.free_tier_daily_limit,
     }
 
 

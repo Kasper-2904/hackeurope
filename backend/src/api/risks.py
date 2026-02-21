@@ -16,6 +16,7 @@ from src.api.schemas import (
     RiskSignalResolve,
     RiskSignalResponse,
 )
+from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
 from src.storage.models import AuditLog, Project, RiskSignal, Task, User
 
@@ -143,7 +144,8 @@ async def finalize_task_review(
     task_result = await db.execute(
         select(Task).where(Task.id == task_id, Task.created_by_id == current_user.id)
     )
-    if not task_result.scalar_one_or_none():
+    task = task_result.scalar_one_or_none()
+    if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     # Verify project belongs to current user
@@ -155,10 +157,33 @@ async def finalize_task_review(
     if not proj_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+    # Check usage limit
+    paid_service = get_paid_service()
+    effective_team_id = task.team_id or f"user_{current_user.id}"
+    if not await paid_service.check_usage_limit(effective_team_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily usage limit exceeded",
+        )
+
     reviewer = get_reviewer_service()
     try:
         result = await reviewer.finalize_task(task_id, body.project_id, db)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Track usage
+    try:
+        await paid_service.track_usage(
+            db=db,
+            team_id=effective_team_id,
+            user_id=current_user.id,
+            usage_type="reviewer_finalize",
+            data={"task_id": task_id, "project_id": body.project_id},
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Usage tracking failed in reviewer: %s", e)
+
     await db.commit()
     return result

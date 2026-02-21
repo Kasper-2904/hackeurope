@@ -549,12 +549,14 @@ class UsageRecord(Base):
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("teams.id"))
     team: Mapped["Team"] = relationship("Team")
 
-    marketplace_agent_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("marketplace_agents.id")
-    )
-    marketplace_agent: Mapped["MarketplaceAgent"] = relationship("MarketplaceAgent")
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
 
-    usage_type: Mapped[str] = mapped_column(String(100))  # tool_call, task_completion
+    marketplace_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("marketplace_agents.id"), nullable=True
+    )
+    marketplace_agent: Mapped["MarketplaceAgent | None"] = relationship("MarketplaceAgent")
+
+    usage_type: Mapped[str] = mapped_column(String(100))  # tool_call, plan_generation, reviewer_finalize
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     cost: Mapped[float] = mapped_column(Float, default=0.0)
 

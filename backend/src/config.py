@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     paid_api_key: str = ""
+    paid_product_id: str = ""
     paid_webhook_secret: str = ""
     platform_commission_rate: float = 0.20
     free_tier_daily_limit: int = 10

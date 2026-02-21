@@ -1,5 +1,6 @@
 """Agents API endpoints - Marketplace agents with hosted inference."""
 
+import logging
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
@@ -22,6 +23,8 @@ from src.services.agent_inference import get_inference_service
 from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
 from src.storage.models import Agent, AgentSubscription, MarketplaceAgent, Team, User
+
+logger = logging.getLogger(__name__)
 
 
 async def verify_agent_subscription(
@@ -180,8 +183,16 @@ async def chat_with_agent(
     # Check subscription access
     await verify_agent_subscription(db, agent_id, request.team_id, current_user.id)
 
+    # Check usage limit before doing work
+    paid_service = get_paid_service()
+    effective_team_id = agent.team_id or f"user_{current_user.id}"
+    if not await paid_service.check_usage_limit(effective_team_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily usage limit exceeded",
+        )
+
     agent.last_seen = datetime.utcnow()
-    await db.commit()
 
     inference_service = get_inference_service()
 
@@ -195,13 +206,19 @@ async def chat_with_agent(
         system_prompt=system_prompt,
     )
 
-    paid_service = get_paid_service()
-    paid_service.record_usage(
-        product_id=agent_id,
-        customer_id=current_user.id,
-        event_name="chat",
-        data={"team_id": request.team_id, "success": True},
-    )
+    # Track usage
+    try:
+        await paid_service.track_usage(
+            db=db,
+            team_id=effective_team_id,
+            user_id=current_user.id,
+            usage_type="chat",
+            data={"agent_id": agent_id, "team_id": request.team_id},
+        )
+    except Exception as e:
+        logger.warning("Usage tracking failed in chat: %s", e)
+
+    await db.commit()
 
     return {
         "agent_id": agent_id,
@@ -232,6 +249,15 @@ async def execute_agent_skill(
 
     await verify_agent_subscription(db, agent_id, request.team_id, current_user.id)
 
+    # Check usage limit
+    paid_service = get_paid_service()
+    effective_team_id = agent.team_id or f"user_{current_user.id}"
+    if not await paid_service.check_usage_limit(effective_team_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily usage limit exceeded",
+        )
+
     # Verify skill is available
     if agent.skills and request.skill not in agent.skills:
         raise HTTPException(
@@ -240,7 +266,6 @@ async def execute_agent_skill(
         )
 
     agent.last_seen = datetime.utcnow()
-    await db.commit()
 
     inference_service = get_inference_service()
 
@@ -254,13 +279,19 @@ async def execute_agent_skill(
         system_prompt=system_prompt,
     )
 
-    paid_service = get_paid_service()
-    paid_service.record_usage(
-        product_id=agent_id,
-        customer_id=current_user.id,
-        event_name="skill_execution",
-        data={"team_id": request.team_id, "skill": request.skill, "success": True},
-    )
+    # Track usage
+    try:
+        await paid_service.track_usage(
+            db=db,
+            team_id=effective_team_id,
+            user_id=current_user.id,
+            usage_type="skill_execution",
+            data={"agent_id": agent_id, "team_id": request.team_id, "skill": request.skill},
+        )
+    except Exception as e:
+        logger.warning("Usage tracking failed in skill execution: %s", e)
+
+    await db.commit()
 
     return {
         "agent_id": agent_id,

@@ -1,5 +1,6 @@
 """Plan routing endpoints."""
 
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import uuid4
@@ -18,8 +19,11 @@ from src.api.schemas import (
     PlanSubmitForApproval,
 )
 from src.core.state import PlanStatus
+from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
 from src.storage.models import AuditLog, Plan, Project, Task, User
+
+logger = logging.getLogger(__name__)
 
 plans_router = APIRouter(prefix="/plans", tags=["Plans"])
 
@@ -50,6 +54,15 @@ async def generate_plan(
     if not proj_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+    # Check usage limit
+    paid_service = get_paid_service()
+    effective_team_id = task.team_id or f"user_{current_user.id}"
+    if not await paid_service.check_usage_limit(effective_team_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily usage limit exceeded",
+        )
+
     orchestrator = get_orchestrator()
     result_data = await orchestrator.generate_plan(
         task_id=task.id,
@@ -58,6 +71,18 @@ async def generate_plan(
         project_id=plan_data.project_id,
         db=db,
     )
+
+    # Track usage
+    try:
+        await paid_service.track_usage(
+            db=db,
+            team_id=effective_team_id,
+            user_id=current_user.id,
+            usage_type="plan_generation",
+            data={"task_id": task.id, "project_id": plan_data.project_id},
+        )
+    except Exception as e:
+        logger.warning("Usage tracking failed in plan generation: %s", e)
 
     await db.commit()
     return result_data
