@@ -1,11 +1,16 @@
 """GitHub ingestion service with swappable data provider."""
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.api.schemas_github import GitHubCIStatus, GitHubCommit, GitHubPullRequest
 from src.core.state import RiskSeverity, RiskSource
@@ -113,6 +118,91 @@ class MockGitHubProvider:
                 "pr_number": 41,
             },
         ]
+
+
+# ============== Real Provider ==============
+
+
+class HttpxGitHubProvider:
+    """Provider that fetches real data from the GitHub REST API."""
+
+    def __init__(self, token: str, api_base_url: str = "https://api.github.com"):
+        self._base = api_base_url.rstrip("/")
+        self._client = httpx.AsyncClient(
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30.0,
+        )
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx client."""
+        await self._client.aclose()
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """Make a GET request and handle errors."""
+        resp = await self._client.get(f"{self._base}{path}", params=params)
+        if resp.status_code == 401:
+            raise ValueError("GitHub authentication failed — check GITHUB_TOKEN")
+        if resp.status_code == 403:
+            if "rate limit" in resp.text.lower():
+                retry_after = resp.headers.get("Retry-After", "unknown")
+                raise ValueError(f"GitHub API rate limit exceeded. Retry after: {retry_after}s")
+            raise ValueError("GitHub API forbidden — check token permissions")
+        if resp.status_code == 404:
+            raise ValueError(f"GitHub resource not found: {path}")
+        if resp.status_code >= 400:
+            logger.warning("GitHub API error %s for %s: %s", resp.status_code, path, resp.text[:200])
+            raise ValueError(f"GitHub API error: {resp.status_code}")
+        return resp.json()
+
+    async def get_pull_requests(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        pr_list = await self._get(
+            f"/repos/{owner}/{repo}/pulls",
+            params={"state": "open", "per_page": 30},
+        )
+
+        # Fetch individual PRs concurrently for additions/deletions/mergeable_state
+        async def _fetch_detail(pr_summary: dict) -> dict[str, Any]:
+            try:
+                return await self._get(
+                    f"/repos/{owner}/{repo}/pulls/{pr_summary['number']}"
+                )
+            except Exception as e:
+                logger.warning("Failed to fetch PR #%s detail: %s", pr_summary.get("number"), e)
+                return pr_summary  # Fall back to summary data
+
+        return list(await asyncio.gather(*[_fetch_detail(pr) for pr in pr_list]))
+
+    async def get_recent_commits(
+        self, owner: str, repo: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        return await self._get(
+            f"/repos/{owner}/{repo}/commits",
+            params={"per_page": limit},
+        )
+
+    async def get_ci_status(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        data = await self._get(
+            f"/repos/{owner}/{repo}/actions/runs",
+            params={"per_page": 20},
+        )
+        runs = data.get("workflow_runs", [])
+        result = []
+        for run in runs:
+            pr_numbers = run.get("pull_requests", [])
+            pr_number = pr_numbers[0]["number"] if pr_numbers else None
+            result.append({
+                "name": run.get("name", "unknown"),
+                "status": run.get("status", "unknown"),
+                "conclusion": run.get("conclusion"),
+                "started_at": run.get("run_started_at"),
+                "completed_at": run.get("updated_at"),
+                "pr_number": pr_number,
+            })
+        return result
 
 
 # ============== Normalizer ==============

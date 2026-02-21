@@ -1,14 +1,18 @@
 """Tests for GitHub ingestion adapter (M1-T2)."""
 
 from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas_github import GitHubCIStatus, GitHubCommit, GitHubPullRequest
 from src.services.github_service import (
     GitHubService,
+    HttpxGitHubProvider,
     MockGitHubProvider,
     _parse_repo,
     normalize_ci_status,
@@ -231,3 +235,128 @@ async def test_sync_project_is_idempotent(db_session: AsyncSession):
     )
     risks = list(result.scalars().all())
     assert len(risks) == 2  # Not 4 — dedup prevents duplicates
+
+
+# ============== HttpxGitHubProvider ==============
+
+
+def _mock_response(status_code: int = 200, json_data: Any = None, text: str = "") -> httpx.Response:
+    """Create a mock httpx.Response with proper content."""
+    import json as jsonlib
+
+    content = jsonlib.dumps(json_data).encode() if json_data is not None else text.encode()
+    return httpx.Response(
+        status_code=status_code,
+        content=content,
+        headers={"content-type": "application/json"} if json_data is not None else {},
+        request=httpx.Request("GET", "https://api.github.com/test"),
+    )
+
+
+@pytest.fixture
+def httpx_provider():
+    """Create an HttpxGitHubProvider with a mocked httpx client."""
+    provider = HttpxGitHubProvider(token="test-token")
+    provider._client = AsyncMock(spec=httpx.AsyncClient)
+    return provider
+
+
+async def test_httpx_provider_fetches_prs(httpx_provider):
+    """HttpxGitHubProvider fetches PR list then details for each."""
+    now = datetime.now(timezone.utc).isoformat()
+    pr_list_resp = _mock_response(json_data=[
+        {"number": 1, "title": "PR one", "state": "open"},
+    ])
+    pr_detail_resp = _mock_response(json_data={
+        "number": 1,
+        "title": "PR one",
+        "state": "open",
+        "user": {"login": "alice"},
+        "created_at": now,
+        "updated_at": now,
+        "head": {"ref": "feat/one"},
+        "base": {"ref": "main"},
+        "additions": 50,
+        "deletions": 10,
+        "changed_files": 3,
+        "labels": [],
+        "mergeable_state": "clean",
+    })
+    httpx_provider._client.get = AsyncMock(side_effect=[pr_list_resp, pr_detail_resp])
+
+    prs = await httpx_provider.get_pull_requests("owner", "repo")
+
+    assert len(prs) == 1
+    assert prs[0]["additions"] == 50
+    assert prs[0]["mergeable_state"] == "clean"
+    assert httpx_provider._client.get.call_count == 2
+
+
+async def test_httpx_provider_fetches_commits(httpx_provider):
+    """HttpxGitHubProvider fetches commit list."""
+    now = datetime.now(timezone.utc).isoformat()
+    resp = _mock_response(json_data=[
+        {
+            "sha": "abc123",
+            "commit": {"message": "feat: something", "author": {"name": "bob", "date": now}},
+        },
+    ])
+    httpx_provider._client.get = AsyncMock(return_value=resp)
+
+    commits = await httpx_provider.get_recent_commits("owner", "repo", limit=10)
+
+    assert len(commits) == 1
+    assert commits[0]["sha"] == "abc123"
+
+
+async def test_httpx_provider_fetches_ci_status(httpx_provider):
+    """HttpxGitHubProvider fetches Actions runs and maps to our schema."""
+    resp = _mock_response(json_data={
+        "workflow_runs": [
+            {
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "success",
+                "run_started_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:05:00Z",
+                "pull_requests": [{"number": 7}],
+            },
+        ],
+    })
+    httpx_provider._client.get = AsyncMock(return_value=resp)
+
+    ci = await httpx_provider.get_ci_status("owner", "repo")
+
+    assert len(ci) == 1
+    assert ci[0]["name"] == "CI"
+    assert ci[0]["conclusion"] == "success"
+    assert ci[0]["pr_number"] == 7
+
+
+async def test_httpx_provider_handles_auth_error(httpx_provider):
+    """HttpxGitHubProvider raises ValueError on 401."""
+    resp = _mock_response(status_code=401, json_data={"message": "Bad credentials"})
+    httpx_provider._client.get = AsyncMock(return_value=resp)
+
+    with pytest.raises(ValueError, match="authentication failed"):
+        await httpx_provider.get_pull_requests("owner", "repo")
+
+
+async def test_real_provider_used_when_token_set():
+    """get_github_service() uses HttpxGitHubProvider when GITHUB_TOKEN is set."""
+    import src.api.github as github_module
+
+    # Reset singleton
+    github_module._github_service = None
+
+    mock_settings = MagicMock(
+        github_token="ghp_test123",
+        github_api_base_url="https://api.github.com",
+    )
+    with patch("src.api.github.get_settings", return_value=mock_settings):
+        service = github_module.get_github_service()
+
+    assert isinstance(service._provider, HttpxGitHubProvider)
+
+    # Clean up singleton
+    github_module._github_service = None

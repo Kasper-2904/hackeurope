@@ -9,8 +9,9 @@ from sqlalchemy import select
 
 from src.api.auth import get_current_user
 from src.api.schemas_github import GitHubContextResponse, GitHubSyncResponse
+from src.config import get_settings
 from src.core.event_bus import Event, EventType, get_event_bus
-from src.services.github_service import GitHubService
+from src.services.github_service import GitHubService, HttpxGitHubProvider
 from src.storage.database import get_db
 from src.storage.models import Project, User
 
@@ -22,7 +23,14 @@ _github_service: GitHubService | None = None
 def get_github_service() -> GitHubService:
     global _github_service
     if _github_service is None:
-        _github_service = GitHubService()
+        settings = get_settings()
+        provider = None
+        if settings.github_token:
+            provider = HttpxGitHubProvider(
+                token=settings.github_token,
+                api_base_url=settings.github_api_base_url,
+            )
+        _github_service = GitHubService(provider=provider)
     return _github_service
 
 
