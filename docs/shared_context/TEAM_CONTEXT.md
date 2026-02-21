@@ -1,6 +1,4 @@
 # Team Context
 
-## Ownership Map
-## Collaboration Notes
-## Constraints
-## Handover Notes
+## Latest Reviewer Notes
+Search feature added — watch for query performance.

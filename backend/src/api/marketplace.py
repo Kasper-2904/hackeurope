@@ -23,28 +23,39 @@ marketplace_router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
 
 @marketplace_router.post(
-    "/publish/{agent_id}",
+    "/publish",
     response_model=MarketplaceAgentResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def publish_agent(
-    agent_id: str,
     publish_data: AgentPublishRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Publish an agent to the marketplace."""
+    """
+    Publish a seller-hosted agent to the marketplace.
+
+    The seller provides:
+    - inference_endpoint: URL of their hosted agent
+    - access_token: Token for the platform to authenticate with their agent
+    - skills: List of skills the agent provides
+    """
     service = get_marketplace_service()
     try:
         marketplace_agent = await service.publish_agent(
             db=db,
-            agent_id=agent_id,
             seller_id=current_user.id,
             name=publish_data.name,
             category=publish_data.category,
             description=publish_data.description,
             pricing_type=publish_data.pricing_type,
             price_per_use=publish_data.price_per_use,
+            inference_endpoint=publish_data.inference_endpoint,
+            access_token=publish_data.access_token,
+            inference_provider=publish_data.inference_provider,
+            inference_model=publish_data.inference_model,
+            system_prompt=publish_data.system_prompt,
+            skills=publish_data.skills,
         )
         return marketplace_agent
     except ValueError as e:
@@ -56,10 +67,25 @@ async def list_catalog(
     db: Annotated[AsyncSession, Depends(get_db)],
     category: Optional[str] = None,
 ):
-    """Browse the public agent marketplace catalog."""
+    """Browse the public agent marketplace catalog with agent details."""
     service = get_marketplace_service()
     agents = await service.list_public_agents(db=db, category=category)
     return agents
+
+
+@marketplace_router.get("/catalog/{marketplace_agent_id}", response_model=MarketplaceAgentResponse)
+async def get_marketplace_agent(
+    marketplace_agent_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Get a single marketplace agent with full agent details."""
+    service = get_marketplace_service()
+    agent = await service.get_marketplace_agent(db=db, marketplace_agent_id=marketplace_agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Marketplace agent not found"
+        )
+    return agent
 
 
 @marketplace_router.post(

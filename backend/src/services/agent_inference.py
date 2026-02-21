@@ -77,9 +77,12 @@ class AgentInferenceService:
         # Determine provider and call
         provider = agent.inference_provider or "custom"
 
+        # Standard providers use LiteLLM
+        # Custom/seller-hosted endpoints use direct HTTP calls with access token
         if provider in ("openai", "anthropic", "groq", "ollama"):
             return await self._call_litellm(agent, messages)
         else:
+            # "custom", "openai-compatible", or any other provider
             return await self._call_custom_endpoint(agent, messages)
 
     async def _call_litellm(self, agent: Any, messages: list[dict]) -> str:
@@ -107,33 +110,52 @@ class AgentInferenceService:
             return f"Error calling agent: {e}"
 
     async def _call_custom_endpoint(self, agent: Any, messages: list[dict]) -> str:
-        """Call custom OpenAI-compatible endpoint."""
+        """
+        Call seller-hosted OpenAI-compatible endpoint.
+
+        Uses the seller's access token for authentication.
+        """
         endpoint = agent.inference_endpoint
-        api_key = agent.inference_api_key_encrypted
+        access_token = agent.inference_api_key_encrypted  # Seller's access token
         model = agent.inference_model or "default"
 
         if not endpoint:
-            return "Error: No inference endpoint configured"
+            return "Error: No inference endpoint configured for this agent"
+
+        if not access_token:
+            return "Error: No access token configured for this agent"
+
+        # Build headers with seller's access token
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        # Build request payload (OpenAI-compatible format)
+        payload = {
+            "model": model,
+            "messages": messages,
+        }
 
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
                     f"{endpoint.rstrip('/')}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": messages,
-                    },
+                    headers=headers,
+                    json=payload,
                     timeout=60.0,
                 )
                 response.raise_for_status()
                 data = response.json()
                 return data["choices"][0]["message"]["content"]
+            except httpx.HTTPStatusError as e:
+                return (
+                    f"Error calling seller agent (HTTP {e.response.status_code}): {e.response.text}"
+                )
+            except httpx.RequestError as e:
+                return f"Error connecting to seller agent at {endpoint}: {e}"
             except Exception as e:
-                return f"Error calling custom endpoint: {e}"
+                return f"Error calling seller agent: {e}"
 
     def _build_skill_user_prompt(self, skill: str, inputs: dict[str, Any]) -> str:
         """Build the user prompt with inputs for a skill."""
