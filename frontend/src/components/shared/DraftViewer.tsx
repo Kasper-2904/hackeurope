@@ -6,7 +6,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface DraftViewerProps {
-  content: Record<string, unknown> | null;
+  content: string | Record<string, unknown> | null;
   generatedAt?: string | null;
   agentId?: string | null;
 }
@@ -20,8 +20,8 @@ export function DraftViewer({ content, generatedAt, agentId }: DraftViewerProps)
     );
   }
 
-  const language = (content.language as string) ?? "text";
-  const code = (content.code as string) ?? JSON.stringify(content, null, 2);
+  const language = typeof content === "string" ? "text" : ((content.language as string) ?? "text");
+  const code = typeof content === "string" ? content : ((content.code as string) ?? JSON.stringify(content, null, 2));
 
   return (
     <Card>
