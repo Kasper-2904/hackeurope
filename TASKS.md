@@ -21,14 +21,14 @@
   - Adapter failures are retried and surfaced.
 
 ### M1-T3 Scaffold Frontend Repository (owner: Martin)
-- Status: In Progress
+- Status: Done
 - Description: Setup Vite + React + TypeScript + TailwindCSS environment.
 - Acceptance Criteria:
   - Frontend app runs locally on port 5173.
   - Proxy configured to `localhost:8000/api`.
 
 ### M1-T4 Shared UI Components & Auth Flow (owner: Marin)
-- Status: In Progress
+- Status: Done
 - Description: Build base UI shell, navigation, and Login/Register screens.
 - Acceptance Criteria:
   - User can register, login, and persist token in frontend state.
@@ -37,14 +37,14 @@
 ## Milestone 2: Orchestration & Workflows
 
 ### M2-T1 LangGraph Orchestrator & Reviewer API (owner: Kasper)
-- Status: In Progress
+- Status: Done
 - Description: Implement OA planning logic and Final Reviewer gate.
 - Acceptance Criteria:
   - OA generates plan with agent assignment.
   - Reviewer agent can process GitHub commits and flag risks.
 
 ### M2-T2 Agent Execution & PM Approval APIs (owner: Farhan)
-- Status: Done
+- Status: In Progress
 - Description: Build MCP Client connections, tool execution, and PM approval endpoints.
 - Acceptance Criteria:
   - PM can approve/reject plans.
