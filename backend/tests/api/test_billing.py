@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.auth import get_current_user
 from src.storage.database import get_db
 from src.storage.models import (
     AgentSubscription,
