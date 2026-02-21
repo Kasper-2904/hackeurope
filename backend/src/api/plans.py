@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.auth import get_current_user
+from src.api.auth import get_current_user, require_pm_role_for_project
 from src.api.schemas import (
     PlanCreate,
     PlanGenerate,
@@ -69,12 +69,15 @@ async def approve_plan(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Plan:
-    """Approve a plan (PM approval)."""
+    """Approve a plan (PM approval). Requires PM or Admin role on the project."""
     result = await db.execute(select(Plan).where(Plan.id == plan_id))
     plan = result.scalar_one_or_none()
 
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    # Verify PM/Admin role for the project
+    await require_pm_role_for_project(db, current_user, plan.project_id)
 
     if plan.status != PlanStatus.PENDING_PM_APPROVAL.value:
         raise HTTPException(
@@ -111,12 +114,15 @@ async def reject_plan(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Plan:
-    """Reject a plan (PM rejection with reason)."""
+    """Reject a plan (PM rejection with reason). Requires PM or Admin role on the project."""
     result = await db.execute(select(Plan).where(Plan.id == plan_id))
     plan = result.scalar_one_or_none()
 
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    # Verify PM/Admin role for the project
+    await require_pm_role_for_project(db, current_user, plan.project_id)
 
     if plan.status != PlanStatus.PENDING_PM_APPROVAL.value:
         raise HTTPException(

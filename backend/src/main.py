@@ -20,7 +20,6 @@ from src.api.billing import billing_router
 
 from src.config import get_settings
 from src.core.event_bus import get_event_bus
-from src.mcp_client.manager import get_mcp_manager
 from src.storage.database import init_db
 
 health_router = APIRouter(tags=["Health"])
@@ -34,9 +33,8 @@ async def health_check() -> dict[str, str]:
 
 @health_router.get("/agents/status")
 async def agents_status() -> dict[str, Any]:
-    """Get status of all connected agents."""
-    mcp_manager = get_mcp_manager()
-    return await mcp_manager.health_check()
+    """Get status of all agents."""
+    return {"status": "ok", "message": "Use /api/v1/agents to list agents"}
 
 
 @asynccontextmanager
@@ -58,11 +56,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     print("Shutting down...")
 
-    # Close all MCP connections
-    mcp_manager = get_mcp_manager()
-    await mcp_manager.close_all()
-    print("MCP connections closed")
-
     # Stop event bus
     await event_bus.stop()
     print("Event bus stopped")
@@ -76,7 +69,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         description="""
-        Multi-agent orchestration platform with MCP support.
+        Agent Marketplace Platform - Buy, sell, and use AI agents.
         """,
         lifespan=lifespan,
     )

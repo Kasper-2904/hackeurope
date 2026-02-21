@@ -1,4 +1,5 @@
-"""Agents routing endpoints."""
+"""Agents API endpoints - Marketplace agents with hosted inference."""
+
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
@@ -7,60 +8,47 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.auth import create_agent_token, get_current_user
+from src.api.auth import get_current_user
 from src.api.schemas import (
+    AgentChatRequest,
+    AgentCreate,
     AgentDetail,
-    AgentRegister,
     AgentResponse,
-    AgentTokenResponse,
-    MCPToolCall,
-    MCPToolResult,
+    AgentSkillRequest,
 )
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import AgentStatus
-from src.mcp_client.manager import get_mcp_manager
+from src.services.agent_inference import get_inference_service
 from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
-from src.storage.models import Agent, Team, User
+from src.storage.models import Agent, User
 
 agents_router = APIRouter(prefix="/agents", tags=["Agents"])
 
-@agents_router.post(
-    "/register", response_model=AgentTokenResponse, status_code=status.HTTP_201_CREATED
-)
-async def register_agent(
-    agent_data: AgentRegister,
+
+@agents_router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
+async def create_agent(
+    agent_data: AgentCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict[str, Any]:
+) -> Agent:
+    """Publish a new marketplace agent."""
     event_bus = get_event_bus()
 
-    if agent_data.team_id:
-        result = await db.execute(
-            select(Team).where(Team.id == agent_data.team_id, Team.owner_id == current_user.id)
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Team not found or you don't have access",
-            )
-
-    agent_id = str(uuid4())
     agent = Agent(
-        id=agent_id,
+        id=str(uuid4()),
         name=agent_data.name,
         role=agent_data.role,
         description=agent_data.description,
-        mcp_endpoint=str(agent_data.mcp_endpoint),
+        system_prompt=agent_data.system_prompt,
+        inference_endpoint=agent_data.inference_endpoint,
+        inference_api_key_encrypted=agent_data.inference_api_key,
+        inference_provider=agent_data.inference_provider,
+        inference_model=agent_data.inference_model,
+        skills=agent_data.skills,
         owner_id=current_user.id,
-        team_id=agent_data.team_id,
-        status=AgentStatus.PENDING,
-        extra_data=agent_data.metadata,
+        status=AgentStatus.ONLINE,
     )
-
-    agent_token = create_agent_token(agent_id)
-    import hashlib
-    agent.api_token_hash = hashlib.sha256(agent_token.encode()).hexdigest()
 
     db.add(agent)
     await db.commit()
@@ -70,84 +58,25 @@ async def register_agent(
         Event(
             type=EventType.AGENT_REGISTERED,
             data={
-                "agent_id": agent_id,
-                "name": agent_data.name,
-                "role": agent_data.role,
-                "mcp_endpoint": str(agent_data.mcp_endpoint),
+                "agent_id": agent.id,
+                "name": agent.name,
+                "role": agent.role,
+                "skills": agent.skills,
             },
             source="api",
         )
     )
 
-    return {
-        "agent": agent,
-        "token": agent_token,
-        "message": "Store this token securely. It will not be shown again.",
-    }
-
-
-@agents_router.post("/{agent_id}/connect")
-async def connect_to_agent(
-    agent_id: str,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict[str, Any]:
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id, Agent.owner_id == current_user.id)
-    )
-    agent = result.scalar_one_or_none()
-
-    if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    mcp_manager = get_mcp_manager()
-    connection = await mcp_manager.register_agent(agent_id, agent.mcp_endpoint, connect=True)
-
-    if connection.status != AgentStatus.ONLINE:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to connect to agent's MCP server",
-        )
-
-    agent.status = AgentStatus.ONLINE
-    agent.last_seen = datetime.utcnow()
-    agent.capabilities = {
-        "tools": [
-            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
-            for t in connection.capabilities.tools
-        ],
-        "resources": [
-            {
-                "uri": str(r.uri),
-                "name": r.name,
-                "description": r.description,
-                "mime_type": r.mime_type,
-            }
-            for r in connection.capabilities.resources
-        ],
-    }
-
-    await db.commit()
-
-    return {
-        "status": "connected",
-        "agent_id": agent_id,
-        "capabilities": agent.capabilities,
-    }
+    return agent
 
 
 @agents_router.get("", response_model=list[AgentResponse])
 async def list_agents(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    team_id: str | None = None,
 ) -> list[Agent]:
-    query = select(Agent).where(Agent.owner_id == current_user.id)
-
-    if team_id:
-        query = query.where(Agent.team_id == team_id)
-
-    result = await db.execute(query)
+    """List user's agents."""
+    result = await db.execute(select(Agent).where(Agent.owner_id == current_user.id))
     return list(result.scalars().all())
 
 
@@ -157,9 +86,8 @@ async def get_agent(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Agent:
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id, Agent.owner_id == current_user.id)
-    )
+    """Get agent details."""
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
 
     if not agent:
@@ -168,35 +96,95 @@ async def get_agent(
     return agent
 
 
-@agents_router.post("/{agent_id}/tools/{tool_name}", response_model=MCPToolResult)
-async def call_agent_tool(
+@agents_router.post("/{agent_id}/chat")
+async def chat_with_agent(
     agent_id: str,
-    tool_name: str,
-    tool_call: MCPToolCall,
+    request: AgentChatRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id, Agent.owner_id == current_user.id)
-    )
+    """Chat with an agent (for humans)."""
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
 
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    mcp_manager = get_mcp_manager()
-    tool_result = await mcp_manager.call_tool(agent_id, tool_name, tool_call.arguments)
+    agent.last_seen = datetime.utcnow()
+    await db.commit()
+
+    inference_service = get_inference_service()
+
+    # Use override or default system prompt
+    system_prompt = request.system_prompt_override or agent.system_prompt
+
+    response = await inference_service.chat(
+        agent=agent,
+        message=request.message,
+        conversation_history=request.conversation_history,
+        system_prompt=system_prompt,
+    )
+
+    paid_service = get_paid_service()
+    paid_service.record_usage(
+        product_id=agent_id,
+        customer_id=current_user.id,
+        event_name="chat",
+        data={"success": True},
+    )
+
+    return {
+        "agent_id": agent_id,
+        "response": response,
+    }
+
+
+@agents_router.post("/{agent_id}/skills/execute")
+async def execute_agent_skill(
+    agent_id: str,
+    request: AgentSkillRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Execute a skill on an agent (for orchestrator or humans)."""
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    # Verify skill is available
+    if agent.skills and request.skill not in agent.skills:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Skill '{request.skill}' not available. Available: {agent.skills}",
+        )
 
     agent.last_seen = datetime.utcnow()
     await db.commit()
 
-    paid_service = get_paid_service()
-    customer_id = agent.team_id if agent.team_id else current_user.id
-    paid_service.record_usage(
-        product_id=agent_id,
-        customer_id=customer_id,
-        event_name="tool_call",
-        data={"tool_name": tool_name, "success": tool_result.get("success", False)},
+    inference_service = get_inference_service()
+
+    # Use override or default system prompt
+    system_prompt = request.system_prompt_override or agent.system_prompt
+
+    result_text = await inference_service.execute_skill(
+        agent=agent,
+        skill=request.skill,
+        inputs=request.inputs,
+        system_prompt=system_prompt,
     )
 
-    return tool_result
+    paid_service = get_paid_service()
+    paid_service.record_usage(
+        product_id=agent_id,
+        customer_id=current_user.id,
+        event_name="skill_execution",
+        data={"skill": request.skill, "success": True},
+    )
+
+    return {
+        "agent_id": agent_id,
+        "skill": request.skill,
+        "result": result_text,
+    }

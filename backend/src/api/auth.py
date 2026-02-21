@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
+from src.core.state import UserRole
 from src.storage.database import get_db
-from src.storage.models import User
+from src.storage.models import TeamMember, User
 
 # Bearer token scheme
 bearer_scheme = HTTPBearer()
@@ -98,15 +99,74 @@ async def get_current_user(
                 detail="Agent tokens cannot access user endpoints",
             )
 
-    except JWTError:
-        raise credentials_exception
+    except JWTError as e:
+        raise credentials_exception from e
 
-    # Fetch user from database
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
 
-    if user is None:
-        raise credentials_exception
+async def check_user_role_for_project(
+    db: AsyncSession,
+    user_id: str,
+    project_id: str,
+    required_roles: list[UserRole],
+) -> bool:
+    """
+    Check if a user has one of the required roles for a project.
+
+    Args:
+        db: Database session
+        user_id: User ID to check
+        project_id: Project ID to check role for
+        required_roles: List of acceptable roles
+
+    Returns:
+        True if user has one of the required roles, False otherwise
+    """
+    result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.user_id == user_id,
+            TeamMember.project_id == project_id,
+        )
+    )
+    team_member = result.scalar_one_or_none()
+
+    if not team_member:
+        return False
+
+    return team_member.role in [r.value for r in required_roles]
+
+
+async def require_pm_role_for_project(
+    db: AsyncSession,
+    user: User,
+    project_id: str,
+) -> None:
+    """
+    Verify that the user has PM or ADMIN role for the given project.
+
+    Raises HTTPException 403 if user doesn't have the required role.
+    Superusers are always allowed.
+
+    Args:
+        db: Database session
+        user: Current user
+        project_id: Project ID to check role for
+
+    Raises:
+        HTTPException: 403 if user doesn't have PM/ADMIN role
+    """
+    # Superusers bypass role checks
+    if user.is_superuser:
+        return
+
+    has_role = await check_user_role_for_project(
+        db, user.id, project_id, [UserRole.PM, UserRole.ADMIN]
+    )
+
+    if not has_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only PM or Admin can perform this action",
+        )
 
     if not user.is_active:
         raise HTTPException(

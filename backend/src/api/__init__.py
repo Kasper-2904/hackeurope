@@ -4,7 +4,7 @@ from src.api.auth import get_current_user, create_access_token
 from src.api.schemas import (
     UserCreate,
     UserResponse,
-    AgentRegister,
+    AgentCreate,
     AgentResponse,
     TaskCreate,
     TaskResponse,
@@ -17,7 +17,7 @@ __all__ = [
     "create_access_token",
     "UserCreate",
     "UserResponse",
-    "AgentRegister",
+    "AgentCreate",
     "AgentResponse",
     "TaskCreate",
     "TaskResponse",

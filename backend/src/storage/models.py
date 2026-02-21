@@ -76,21 +76,26 @@ class Team(Base):
 
 
 class Agent(Base):
-    """Agent model for registered MCP servers."""
+    """Marketplace agent - hosted inference with built-in skills."""
 
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
-    role: Mapped[str] = mapped_column(String(100))  # coder, reviewer, tester, etc.
+    role: Mapped[str] = mapped_column(String(100))  # coder, reviewer, designer, etc.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Connection
-    mcp_endpoint: Mapped[str] = mapped_column(String(500))  # URL to agent's MCP server
-    status: Mapped[AgentStatus] = mapped_column(Enum(AgentStatus), default=AgentStatus.PENDING)
+    # Inference config (seller provides)
+    inference_endpoint: Mapped[str] = mapped_column(String(500))
+    inference_api_key_encrypted: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    inference_provider: Mapped[str] = mapped_column(String(50), default="openai")
+    inference_model: Mapped[str] = mapped_column(String(100), default="gpt-4o-mini")
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)  # Default system prompt
 
-    # Authentication token for this agent
-    api_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Skills this agent provides (built-in)
+    skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    status: Mapped[AgentStatus] = mapped_column(Enum(AgentStatus), default=AgentStatus.ONLINE)
 
     # Ownership
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
@@ -99,14 +104,11 @@ class Agent(Base):
     team_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("teams.id"), nullable=True)
     team: Mapped["Team | None"] = relationship("Team", back_populates="agents")
 
-    # Capabilities (cached from MCP discovery)
-    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Extra data
+    # Extra data (custom system prompt override, etc.)
     extra_data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Relationships

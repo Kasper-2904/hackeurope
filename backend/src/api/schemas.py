@@ -88,15 +88,48 @@ class TeamDetail(TeamResponse):
 # ============== Agent Schemas ==============
 
 
-class AgentRegister(BaseModel):
-    """Schema for registering a new agent (MCP server)."""
+class AgentCreate(BaseModel):
+    """Schema for creating/publishing a marketplace agent."""
 
     name: str = Field(..., min_length=1, max_length=255)
-    role: str = Field(..., description="Agent role: coder, reviewer, tester, docs, etc.")
+    role: str = Field(..., description="Agent role: coder, reviewer, designer, etc.")
     description: str | None = None
-    mcp_endpoint: HttpUrl = Field(..., description="URL where agent's MCP server is running")
-    team_id: str | None = Field(None, description="Team to add this agent to")
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str | None = Field(None, description="Agent's default system prompt")
+
+    # Inference config (seller provides)
+    inference_endpoint: str = Field(..., description="OpenAI-compatible inference endpoint URL")
+    inference_api_key: str | None = Field(None, description="API key for the endpoint")
+    inference_provider: str = Field(
+        "openai", description="Provider: openai, anthropic, groq, custom"
+    )
+    inference_model: str = Field("gpt-4o-mini", description="Model name")
+
+    # Built-in skills
+    skills: list[str] = Field(
+        default_factory=list, description="Skills: generate_code, review_code, debug_code, etc."
+    )
+
+
+class AgentChatRequest(BaseModel):
+    """Schema for chatting with an agent."""
+
+    message: str = Field(..., description="User's message")
+    conversation_history: list[dict[str, str]] = Field(
+        default_factory=list, description="Previous messages"
+    )
+    system_prompt_override: str | None = Field(
+        None, description="Override agent's default system prompt"
+    )
+
+
+class AgentSkillRequest(BaseModel):
+    """Schema for executing an agent skill."""
+
+    skill: str = Field(..., description="Skill to execute")
+    inputs: dict[str, Any] = Field(default_factory=dict, description="Skill inputs")
+    system_prompt_override: str | None = Field(
+        None, description="Override agent's default system prompt"
+    )
 
 
 class AgentResponse(BaseModel):
@@ -106,7 +139,11 @@ class AgentResponse(BaseModel):
     name: str
     role: str
     description: str | None
-    mcp_endpoint: str
+    inference_endpoint: str
+    inference_provider: str
+    inference_model: str
+    system_prompt: str | None
+    skills: list[str] = []
     status: AgentStatus
     owner_id: str
     team_id: str | None
