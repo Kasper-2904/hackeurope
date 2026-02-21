@@ -1,162 +1,122 @@
 # Tasks
 
-## Milestone 1: Core Context, Marketplace, and Ownership Rules
+## Team Alignment
+*   **Backend & Integrations**: Farhan & Kasper
+*   **Frontend & UI**: Martin & Marin
 
-### M1-T1 Define shared context schema + single-owner task rule (owner: Marin)
+## Milestone 1: Core Setup & Context
+
+### M1-T1 Core Backend Models & Auth API (owner: Farhan)
 - Status: Todo
-- Description: Finalize schemas and canonical markdown file structure, including enforcement that one task has one owner.
+- Description: Setup SQLite database, core models (Users, Teams, Projects, Tasks), and JWT Auth APIs.
 - Acceptance Criteria:
-  - Shared context `.md` files exist with documented sections.
-  - Task schema enforces exactly one owner per task.
-- Test Strategy:
-  - Unit tests for schema validation and ownership constraint.
+  - Database is initialized.
+  - Auth endpoints (`/register`, `/login`) work.
 
-### M1-T2 Implement GitHub ingestion adapter (owner: Kasper)
+### M1-T2 GitHub Ingestion Adapter (owner: Kasper)
 - Status: Todo
 - Description: Build connector and normalization for GitHub task/PR/CI context.
 - Acceptance Criteria:
   - Ingestion jobs fetch and normalize core GitHub entities.
   - Adapter failures are retried and surfaced.
-- Test Strategy:
-  - Integration tests with mocked GitHub responses.
 
-### M1-T3 Implement hosted-agent registry + runtime metadata (owner: Martin)
+### M1-T3 Scaffold Frontend Repository (owner: Martin)
 - Status: Todo
-- Description: Build API/storage for hosted-agent registration, capabilities, versioning, and execution status.
+- Description: Setup Vite + React + TypeScript + TailwindCSS environment.
 - Acceptance Criteria:
-  - Hosted agent can be created/listed and referenced by OA.
-  - Runtime metadata is queryable and auditable.
-- Test Strategy:
-  - Integration tests for create/list/update/error paths.
+  - Frontend app runs locally on port 5173.
+  - Proxy configured to `localhost:8000/api`.
 
-### M1-T4 Implement PM project-agent selection and approval state model (owner: Farhan)
+### M1-T4 Shared UI Components & Auth Flow (owner: Marin)
 - Status: Todo
-- Description: Add PM controls for selecting allowed agents per project and versioned plan approval states.
+- Description: Build base UI shell, navigation, and Login/Register screens.
 - Acceptance Criteria:
-  - PM can configure project agent allowlist.
-  - OA plans cannot execute before PM approval.
-- Test Strategy:
-  - Integration tests for allowlist enforcement and approval transitions.
+  - User can register, login, and persist token in frontend state.
+  - Navigation layout handles authenticated state.
 
-## Milestone 2: Orchestration and Final Review
+## Milestone 2: Orchestration & Workflows
 
-### M2-T1 Build OA planning engine with hosted-agent capability checks (owner: Marin)
+### M2-T1 LangGraph Orchestrator & Reviewer API (owner: Kasper)
 - Status: Todo
-- Description: OA creates plan by selecting specialist hosted agent first, then suggesting team-member assignment.
+- Description: Implement OA planning logic and Final Reviewer gate.
 - Acceptance Criteria:
-  - OA outputs specialist-agent choice + suggested task owner.
-  - Plan includes rationale for agent choice and owner suggestion.
-- Test Strategy:
-  - Unit tests for planning constraints.
-  - Integration tests for capability query fallback behavior.
+  - OA generates plan with agent assignment.
+  - Reviewer agent can process GitHub commits and flag risks.
 
-### M2-T2 Implement hosted-agent autonomous execution pipeline (owner: Kasper)
+### M2-T2 Agent Execution & PM Approval APIs (owner: Farhan)
 - Status: Todo
-- Description: Dispatch approved tasks to specialist hosted agents and collect 70% draft outputs.
+- Description: Build MCP Client connections, tool execution, and PM approval endpoints.
 - Acceptance Criteria:
-  - Agent runs are tracked with status and run metadata.
-  - 70% draft outputs are attached to correct task and exposed for PM review.
-- Test Strategy:
-  - Integration tests for dispatch/retry/failure handling.
+  - PM can approve/reject plans.
+  - Tasks can be dispatched to agents via MCP.
 
-### M2-T3 Implement commit-triggered reviewer gate (owner: Martin)
+### M2-T3 Developer Dashboard UI (owner: Martin)
 - Status: Todo
-- Description: Trigger reviewer analysis on GitHub commit detection with blocker/non-blocker findings.
+- Description: Build developer UI for task list, sub-actions, agent draft review, and risk graphs.
 - Acceptance Criteria:
-  - Reviewer runs when task-owner commit is detected.
-  - Reviewer checks consistency with other tasks and in-flight conflict risk.
-  - Reviewer updates shared context with findings and merge-readiness decision.
-- Test Strategy:
-  - End-to-end tests for pass and block scenarios.
+  - Developer sees assigned tasks.
+  - Developer can finalize a draft.
 
-### M2-T4 Implement developer finalize flow over agent drafts (owner: Farhan)
+### M2-T4 PM Dashboard UI (owner: Marin)
 - Status: Todo
-- Description: Build developer actions to complete last 30% over agent-generated 70% draft and commit to GitHub.
+- Description: Build PM view with goals, team progress, and approval gates.
 - Acceptance Criteria:
-  - Developers can complete and finalize assigned task with full audit trail.
-  - GitHub commit webhook updates task progress and triggers reviewer pipeline.
-- Test Strategy:
-  - Integration tests for draft lifecycle and finalization.
+  - PM can manage project agent allowlist.
+  - PM can review and approve OA plans.
 
-## Milestone 3: Marketplace and Billing (HackEurope Challenges)
+## Milestone 3: Marketplace & Billing
 
-### M3-T1 Build agent marketplace catalog and visibility model (owner: Martin)
+### M3-T1 Marketplace API & Stripe Integration (owner: Farhan)
 - Status: Todo
-- Description: Implement marketplace listing, private/public visibility, and discovery filters.
+- Description: Build agent catalog APIs, Stripe seat checkout, and Stripe Connect.
 - Acceptance Criteria:
-  - Teams can browse public agents.
-  - Private agents are scoped to creator team only.
-- Test Strategy:
-  - Integration tests for visibility and access control.
+  - `MarketplaceAgent` catalog endpoints work.
+  - Stripe subscriptions can be created via checkout session.
 
-### M3-T2 Implement custom agent creation and publication flow (owner: Marin)
+### M3-T2 Paid.ai Usage Metering (owner: Kasper)
 - Status: Todo
-- Description: Build flow to create custom agents and publish new versions publicly.
-- Acceptance Criteria:
-  - Agent creator can create, version, and publish/unpublish agents.
-  - OA can reference selected published versions.
-- Test Strategy:
-  - Integration tests for create/version/publish lifecycle.
-
-### M3-T3 Integrate Stripe seat-based subscriptions (owner: Farhan)
-- Status: Todo
-- Description: Implement checkout, subscription lifecycle, and seat-count enforcement.
-- Acceptance Criteria:
-  - Teams can subscribe and manage seats.
-  - Seat limit enforcement is active.
-- Test Strategy:
-  - Integration tests for Stripe webhook flows and seat updates.
-
-### M3-T4 Integrate Paid.ai usage metering (owner: Kasper)
-- Status: Todo
-- Description: Emit hosted-agent usage events to Paid.ai and ingest cost/value data.
+- Description: Emit hosted-agent usage events to Paid.ai and track internal usage DB.
 - Acceptance Criteria:
   - Agent runs produce billable usage events.
-  - Usage/cost is visible by project/team/agent.
-- Test Strategy:
-  - Integration tests for usage event payloads and reconciliation.
+  - Usage limits are enforced.
 
-## Milestone 4: Dashboard Experiences and Demo Readiness
-
-### M4-T1 Developer dashboard: task list + detail panel + risk graph (owner: Kasper)
+### M3-T3 Agent Marketplace UI (owner: Martin)
 - Status: Todo
-- Description: Build developer UI with task list/sub-actions and detail panel for agents/progress/errors/risks.
+- Description: Build the Agent Catalog and the "Publish Agent" flow.
 - Acceptance Criteria:
-  - Selecting a task updates detail panel with required data.
-  - Risk/progress visualization is present and readable.
-- Test Strategy:
-  - Component tests and e2e task navigation.
+  - Teams can browse public agents.
+  - Agent creators can publish versions.
 
-### M4-T2 PM macro dashboard + marketplace controls (owner: Farhan)
+### M3-T4 Billing & Settings UI (owner: Marin)
 - Status: Todo
-- Description: Build PM view with goals, milestones, timeline, team progress, selected agents, and approval/final-review decisions.
+- Description: Build the workspace settings page for Stripe checkout and Paid.ai cost visibility.
 - Acceptance Criteria:
-  - PM can manage project agent allowlist from dashboard.
-  - PM sees critical items and final-review outcomes.
-- Test Strategy:
-  - Component tests and E2E PM approval/manage flow.
+  - User can click "Subscribe" to trigger Stripe flow.
+  - Usage dashboards visualize costs.
 
-### M4-T3 Shared context explorer and explainability UI (owner: Marin)
+## Milestone 4: Polish & Demo
+
+### M4-T1 Security, Audits, & Perf Tuning (owner: Farhan)
+- Status: Todo
+- Description: Finalize role checks, audit trails, and API latency.
+- Acceptance Criteria:
+  - Role-matrix enforced.
+  - Audit logs cover all critical actions.
+
+### M4-T2 Backend QA & Seed Scripts (owner: Kasper)
+- Status: Todo
+- Description: Write DB seeders for the demo and run integration tests.
+- Acceptance Criteria:
+  - Demo scenario data is easily loadable via script.
+
+### M4-T3 Context Explorer & Explainability UI (owner: Martin)
 - Status: Todo
 - Description: Build views for shared context entities and OA/Reviewer rationale traces.
 - Acceptance Criteria:
-  - OA/Reviewer decisions show explainable factors.
-  - Users can inspect linked team/agent/task context.
-- Test Strategy:
-  - Component tests for rationale rendering.
-  - Integration tests for context retrieval.
+  - OA/Reviewer decisions show explainable factors in UI.
 
-### M4-T4 Security, audit, QA, and demo script (owner: Martin)
+### M4-T4 Frontend QA & Demo Script (owner: Marin)
 - Status: Todo
-- Description: Finalize role checks, audit trails, final QA pass, and demo runbook.
+- Description: Final UI polish, fix UX glitches, prepare demo runbook.
 - Acceptance Criteria:
-  - Unauthorized actions are blocked.
   - Demo scenario is reproducible and documented.
-- Test Strategy:
-  - Role-matrix integration tests and full regression dry run.
-
-## Parallelization Plan (Team of 4)
-- Kasper track: GitHub ingestion + 70% draft agent pipeline + Paid.ai + developer dashboard.
-- Martin track: hosted-agent registry + commit-triggered reviewer gate + marketplace visibility + security/QA.
-- Farhan track: PM selection/approval + Stripe subscriptions + PM dashboard.
-- Marin track: shared schema + OA planning + agent creation/publish + explainability.

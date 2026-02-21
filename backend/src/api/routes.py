@@ -22,17 +22,31 @@ from src.api.schemas import (
     AgentRegister,
     AgentResponse,
     AgentTokenResponse,
+    DeveloperDashboardResponse,
     MCPToolCall,
     MCPToolResult,
     PlanCreate,
+    PlanReject,
     PlanResponse,
+    PlanSubmitForApproval,
     PMDashboardResponse,
     ProjectCreate,
     ProjectResponse,
+    RiskSignalCreate,
+    RiskSignalResolve,
+    RiskSignalResponse,
+    SubtaskCreate,
+    SubtaskDetail,
+    SubtaskFinalize,
+    SubtaskResponse,
+    SubtaskUpdate,
     TaskCreate,
     TaskDetail,
     TaskResponse,
     TeamCreate,
+    TeamMemberCreate,
+    TeamMemberResponse,
+    TeamMemberUpdate,
     TeamResponse,
     TokenResponse,
     UserCreate,
@@ -41,11 +55,22 @@ from src.api.schemas import (
 )
 from src.config import get_settings
 from src.core.event_bus import Event, EventType, get_event_bus
-from src.core.state import AgentStatus as ModelAgentStatus, TaskStatus as ModelTaskStatus
-from src.storage.models import AgentStatus, TaskStatus
+from src.core.state import AgentStatus, PlanStatus, TaskStatus
 from src.mcp_client.manager import get_mcp_manager
+from src.services.paid_service import get_paid_service
 from src.storage.database import get_db
-from src.storage.models import Agent, Plan, PlanStatus, Project, Task, Team, User
+from src.storage.models import (
+    Agent,
+    AuditLog,
+    Plan,
+    Project,
+    RiskSignal,
+    Subtask,
+    Task,
+    Team,
+    TeamMember,
+    User,
+)
 
 # ============== Routers ==============
 
@@ -281,14 +306,14 @@ async def connect_to_agent(
     mcp_manager = get_mcp_manager()
     connection = await mcp_manager.register_agent(agent_id, agent.mcp_endpoint, connect=True)
 
-    if connection.status != ModelAgentStatus.ONLINE:
+    if connection.status != AgentStatus.ONLINE:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to connect to agent's MCP server",
         )
 
     # Update agent status and capabilities in database
-    agent.status = AgentStatus.ONLINE.value
+    agent.status = AgentStatus.ONLINE
     agent.last_seen = datetime.utcnow()
     agent.capabilities = {
         "tools": [
@@ -379,6 +404,16 @@ async def call_agent_tool(
     agent.last_seen = datetime.utcnow()
     await db.commit()
 
+    # Log usage to Paid.ai
+    paid_service = get_paid_service()
+    customer_id = agent.team_id if agent.team_id else current_user.id
+    paid_service.record_usage(
+        product_id=agent_id,
+        customer_id=customer_id,
+        event_name="tool_call",
+        data={"tool_name": tool_name, "success": tool_result.get("success", False)},
+    )
+
     return tool_result
 
 
@@ -408,12 +443,12 @@ async def create_task(
         team_id=task_data.team_id,
         assigned_agent_id=task_data.assigned_agent_id,
         created_by_id=current_user.id,
-        status=TaskStatus.PENDING.value,
+        status=TaskStatus.PENDING,
         extra_data=task_data.metadata,
     )
 
     if task_data.assigned_agent_id:
-        task.status = TaskStatus.ASSIGNED.value
+        task.status = TaskStatus.ASSIGNED
         task.assigned_at = datetime.utcnow()
 
     db.add(task)
@@ -513,7 +548,6 @@ async def create_project(
         milestones=project_data.milestones,
         timeline=project_data.timeline,
         github_repo=project_data.github_repo,
-        miro_board_id=project_data.miro_board_id,
         owner_id=current_user.id,
     )
     db.add(project)
@@ -580,9 +614,385 @@ async def approve_plan(
     plan.approved_by_id = current_user.id
     plan.approved_at = datetime.utcnow()
 
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="plan_approved",
+        resource_type="plan",
+        resource_id=plan_id,
+        details={"version": plan.version},
+        previous_state={"status": PlanStatus.PENDING_PM_APPROVAL.value},
+        new_state={"status": PlanStatus.APPROVED.value},
+    )
+    db.add(audit)
+
     await db.commit()
     await db.refresh(plan)
     return plan
+
+
+@plans_router.post("/{plan_id}/reject", response_model=PlanResponse)
+async def reject_plan(
+    plan_id: str,
+    rejection: PlanReject,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Plan:
+    """Reject a plan (PM rejection with reason)."""
+    result = await db.execute(select(Plan).where(Plan.id == plan_id))
+    plan = result.scalar_one_or_none()
+
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    if plan.status != PlanStatus.PENDING_PM_APPROVAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Plan must be in pending_pm_approval status to be rejected",
+        )
+
+    plan.status = PlanStatus.REJECTED.value
+    plan.rejection_reason = rejection.rejection_reason
+
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="plan_rejected",
+        resource_type="plan",
+        resource_id=plan_id,
+        details={"version": plan.version, "reason": rejection.rejection_reason},
+        previous_state={"status": PlanStatus.PENDING_PM_APPROVAL.value},
+        new_state={"status": PlanStatus.REJECTED.value},
+    )
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(plan)
+    return plan
+
+
+@plans_router.post("/{plan_id}/submit", response_model=PlanResponse)
+async def submit_plan_for_approval(
+    plan_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Plan:
+    """Submit a draft plan for PM approval."""
+    result = await db.execute(select(Plan).where(Plan.id == plan_id))
+    plan = result.scalar_one_or_none()
+
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    if plan.status != PlanStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Plan must be in draft status to be submitted for approval",
+        )
+
+    plan.status = PlanStatus.PENDING_PM_APPROVAL.value
+
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="plan_submitted",
+        resource_type="plan",
+        resource_id=plan_id,
+        details={"version": plan.version},
+        previous_state={"status": PlanStatus.DRAFT.value},
+        new_state={"status": PlanStatus.PENDING_PM_APPROVAL.value},
+    )
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(plan)
+    return plan
+
+
+@plans_router.get("/{plan_id}", response_model=PlanResponse)
+async def get_plan(
+    plan_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Plan:
+    """Get a plan by ID."""
+    result = await db.execute(select(Plan).where(Plan.id == plan_id))
+    plan = result.scalar_one_or_none()
+
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    return plan
+
+
+# ============== Subtask Routes ==============
+
+subtasks_router = APIRouter(prefix="/subtasks", tags=["Subtasks"])
+
+
+@subtasks_router.post("", response_model=SubtaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_subtask(
+    subtask_data: SubtaskCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Create a new subtask."""
+    from src.core.state import SubtaskStatus
+
+    subtask = Subtask(
+        id=str(uuid4()),
+        task_id=subtask_data.task_id,
+        plan_id=subtask_data.plan_id,
+        title=subtask_data.title,
+        description=subtask_data.description,
+        priority=subtask_data.priority,
+        assignee_id=subtask_data.assignee_id,
+        assigned_agent_id=subtask_data.assigned_agent_id,
+        status=SubtaskStatus.PENDING.value,
+    )
+    db.add(subtask)
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+@subtasks_router.get("/{subtask_id}", response_model=SubtaskDetail)
+async def get_subtask(
+    subtask_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Get subtask details."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    return subtask
+
+
+@subtasks_router.patch("/{subtask_id}", response_model=SubtaskResponse)
+async def update_subtask(
+    subtask_id: str,
+    update_data: SubtaskUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Update a subtask."""
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for field, value in update_dict.items():
+        if value is not None:
+            if field == "status":
+                setattr(subtask, field, value.value)
+            else:
+                setattr(subtask, field, value)
+
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+@subtasks_router.post("/{subtask_id}/finalize", response_model=SubtaskResponse)
+async def finalize_subtask(
+    subtask_id: str,
+    finalize_data: SubtaskFinalize,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Subtask:
+    """Finalize a subtask with the final content."""
+    from src.core.state import SubtaskStatus
+
+    result = await db.execute(select(Subtask).where(Subtask.id == subtask_id))
+    subtask = result.scalar_one_or_none()
+
+    if not subtask:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    subtask.final_content = finalize_data.final_content
+    subtask.finalized_at = datetime.utcnow()
+    subtask.finalized_by_id = current_user.id
+    subtask.status = SubtaskStatus.FINALIZED.value
+
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="subtask_finalized",
+        resource_type="subtask",
+        resource_id=subtask_id,
+        details={"final_content": finalize_data.final_content},
+    )
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(subtask)
+    return subtask
+
+
+# ============== Team Member Routes ==============
+
+team_members_router = APIRouter(prefix="/team-members", tags=["Team Members"])
+
+
+@team_members_router.post(
+    "", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED
+)
+async def add_team_member(
+    member_data: TeamMemberCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TeamMember:
+    """Add a team member to a project."""
+    # Verify project ownership
+    result = await db.execute(
+        select(Project).where(
+            Project.id == member_data.project_id, Project.owner_id == current_user.id
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    member = TeamMember(
+        id=str(uuid4()),
+        user_id=member_data.user_id,
+        project_id=member_data.project_id,
+        role=member_data.role.value,
+        skills=member_data.skills,
+        capacity=member_data.capacity,
+    )
+    db.add(member)
+    await db.commit()
+    await db.refresh(member)
+    return member
+
+
+@team_members_router.get("/project/{project_id}", response_model=list[TeamMemberResponse])
+async def list_team_members(
+    project_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TeamMember]:
+    """List team members for a project."""
+    result = await db.execute(select(TeamMember).where(TeamMember.project_id == project_id))
+    return list(result.scalars().all())
+
+
+@team_members_router.patch("/{member_id}", response_model=TeamMemberResponse)
+async def update_team_member(
+    member_id: str,
+    update_data: TeamMemberUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TeamMember:
+    """Update a team member."""
+    result = await db.execute(select(TeamMember).where(TeamMember.id == member_id))
+    member = result.scalar_one_or_none()
+
+    if not member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
+
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for field, value in update_dict.items():
+        if value is not None:
+            if field == "role":
+                setattr(member, field, value.value)
+            else:
+                setattr(member, field, value)
+
+    await db.commit()
+    await db.refresh(member)
+    return member
+
+
+# ============== Risk Signal Routes ==============
+
+risks_router = APIRouter(prefix="/risks", tags=["Risk Signals"])
+
+
+@risks_router.post("", response_model=RiskSignalResponse, status_code=status.HTTP_201_CREATED)
+async def create_risk_signal(
+    risk_data: RiskSignalCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RiskSignal:
+    """Create a risk signal (typically by Reviewer Agent)."""
+    risk = RiskSignal(
+        id=str(uuid4()),
+        project_id=risk_data.project_id,
+        task_id=risk_data.task_id,
+        subtask_id=risk_data.subtask_id,
+        source=risk_data.source.value,
+        severity=risk_data.severity.value,
+        title=risk_data.title,
+        description=risk_data.description,
+        rationale=risk_data.rationale,
+        recommended_action=risk_data.recommended_action,
+    )
+    db.add(risk)
+    await db.commit()
+    await db.refresh(risk)
+    return risk
+
+
+@risks_router.get("/project/{project_id}", response_model=list[RiskSignalResponse])
+async def list_project_risks(
+    project_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    include_resolved: bool = False,
+) -> list[RiskSignal]:
+    """List risk signals for a project."""
+    query = select(RiskSignal).where(RiskSignal.project_id == project_id)
+    if not include_resolved:
+        query = query.where(RiskSignal.is_resolved == False)
+    query = query.order_by(RiskSignal.created_at.desc())
+
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
+@risks_router.post("/{risk_id}/resolve", response_model=RiskSignalResponse)
+async def resolve_risk_signal(
+    risk_id: str,
+    resolve_data: RiskSignalResolve,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RiskSignal:
+    """Resolve a risk signal."""
+    result = await db.execute(select(RiskSignal).where(RiskSignal.id == risk_id))
+    risk = result.scalar_one_or_none()
+
+    if not risk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk signal not found")
+
+    risk.is_resolved = True
+    risk.resolved_at = datetime.utcnow()
+    risk.resolved_by_id = current_user.id
+
+    # Create audit log
+    audit = AuditLog(
+        id=str(uuid4()),
+        user_id=current_user.id,
+        action="risk_resolved",
+        resource_type="risk_signal",
+        resource_id=risk_id,
+        details={"resolution_note": resolve_data.resolution_note},
+    )
+    db.add(audit)
+
+    await db.commit()
+    await db.refresh(risk)
+    return risk
 
 
 # ============== Dashboard Routes ==============
@@ -597,6 +1007,8 @@ async def pm_dashboard(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
     """Get PM dashboard data."""
+    from src.core.state import RiskSeverity
+
     # Verify project ownership
     result = await db.execute(
         select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
@@ -606,12 +1018,129 @@ async def pm_dashboard(
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+    # Get team members
+    members_result = await db.execute(select(TeamMember).where(TeamMember.project_id == project_id))
+    team_members = list(members_result.scalars().all())
+
+    # Get tasks by status (tasks linked to project via plans)
+    plans_result = await db.execute(
+        select(Plan).where(Plan.project_id == project_id).order_by(Plan.created_at.desc()).limit(10)
+    )
+    recent_plans = list(plans_result.scalars().all())
+
+    # Get open risks
+    risks_result = await db.execute(
+        select(RiskSignal)
+        .where(
+            RiskSignal.project_id == project_id,
+            RiskSignal.is_resolved == False,
+        )
+        .order_by(RiskSignal.created_at.desc())
+    )
+    open_risks = list(risks_result.scalars().all())
+
+    # Critical alerts are high/critical severity unresolved risks
+    critical_alerts = [
+        r
+        for r in open_risks
+        if r.severity in [RiskSeverity.HIGH.value, RiskSeverity.CRITICAL.value]
+    ]
+
     return {
         "project_id": project_id,
         "project": project,
-        "team_members": [],
-        "tasks_by_status": {},
-        "recent_plans": [],
-        "open_risks": [],
-        "critical_alerts": [],
+        "team_members": team_members,
+        "tasks_by_status": {},  # TODO: Aggregate from tasks linked to project
+        "recent_plans": recent_plans,
+        "open_risks": open_risks,
+        "critical_alerts": critical_alerts,
     }
+
+
+@dashboard_router.get("/developer/{user_id}", response_model=DeveloperDashboardResponse)
+async def developer_dashboard(
+    user_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Get developer dashboard data."""
+    from src.core.state import SubtaskStatus
+
+    # Ensure user can only access their own dashboard (or is admin)
+    if current_user.id != user_id and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot access another user's dashboard",
+        )
+
+    # Get tasks assigned to this user (as creator for now)
+    tasks_result = await db.execute(
+        select(Task).where(Task.created_by_id == user_id).order_by(Task.created_at.desc())
+    )
+    assigned_tasks = list(tasks_result.scalars().all())
+
+    # Get team memberships for this user
+    memberships_result = await db.execute(select(TeamMember).where(TeamMember.user_id == user_id))
+    memberships = list(memberships_result.scalars().all())
+    member_ids = [m.id for m in memberships]
+
+    # Get subtasks assigned to user via team memberships
+    assigned_subtasks = []
+    pending_reviews = []
+    if member_ids:
+        subtasks_result = await db.execute(
+            select(Subtask).where(Subtask.assignee_id.in_(member_ids))
+        )
+        all_subtasks = list(subtasks_result.scalars().all())
+        assigned_subtasks = [s for s in all_subtasks if s.status != SubtaskStatus.IN_REVIEW.value]
+        pending_reviews = [s for s in all_subtasks if s.status == SubtaskStatus.IN_REVIEW.value]
+
+    # Get recent risks for projects user is part of
+    project_ids = [m.project_id for m in memberships]
+    recent_risks = []
+    if project_ids:
+        risks_result = await db.execute(
+            select(RiskSignal)
+            .where(
+                RiskSignal.project_id.in_(project_ids),
+                RiskSignal.is_resolved == False,
+            )
+            .order_by(RiskSignal.created_at.desc())
+            .limit(10)
+        )
+        recent_risks = list(risks_result.scalars().all())
+
+    # Calculate workload
+    workload = sum(m.current_load for m in memberships) / max(len(memberships), 1)
+
+    return {
+        "user_id": user_id,
+        "assigned_tasks": assigned_tasks,
+        "assigned_subtasks": assigned_subtasks,
+        "pending_reviews": pending_reviews,
+        "recent_risks": recent_risks,
+        "workload": workload,
+    }
+
+
+# ============== Reviewer Routes ==============
+
+reviewer_router = APIRouter(prefix="/reviewer", tags=["Reviewer Agent"])
+
+
+@reviewer_router.get("/risks/{project_id}", response_model=list[RiskSignalResponse])
+async def get_reviewer_risks(
+    project_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[RiskSignal]:
+    """Get all risk signals for a project from the reviewer agent perspective."""
+    result = await db.execute(
+        select(RiskSignal)
+        .where(RiskSignal.project_id == project_id)
+        .order_by(
+            RiskSignal.severity.desc(),
+            RiskSignal.created_at.desc(),
+        )
+    )
+    return list(result.scalars().all())

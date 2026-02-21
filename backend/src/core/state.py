@@ -28,6 +28,71 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class PlanStatus(str, Enum):
+    """Status of an implementation plan."""
+
+    DRAFT = "draft"
+    PENDING_PM_APPROVAL = "pending_pm_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+
+
+class SubtaskStatus(str, Enum):
+    """Status of a subtask."""
+
+    PENDING = "pending"
+    DRAFT_GENERATED = "draft_generated"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    FINALIZED = "finalized"
+    REJECTED = "rejected"
+
+
+class PricingType(str, Enum):
+    """Pricing model for marketplace agents."""
+
+    FREE = "free"
+    USAGE_BASED = "usage_based"
+
+
+class SubscriptionStatus(str, Enum):
+    """Status of a Stripe subscription."""
+
+    ACTIVE = "active"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    SUSPENDED = "suspended"
+
+
+class RiskSeverity(str, Enum):
+    """Severity level of a risk signal."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class RiskSource(str, Enum):
+    """Source of a risk signal."""
+
+    MERGE_CONFLICT = "merge_conflict"
+    CI_FAILURE = "ci_failure"
+    INTEGRATION = "integration"
+    DEPENDENCY = "dependency"
+    SECURITY = "security"
+    REVIEWER = "reviewer"
+
+
+class UserRole(str, Enum):
+    """User role for access control."""
+
+    ADMIN = "admin"
+    PM = "pm"
+    DEVELOPER = "developer"
+
+
 @dataclass
 class MCPTool:
     """Represents a tool exposed by an MCP server (agent)."""

@@ -39,6 +39,8 @@ A multi-agent orchestration platform with MCP (Model Context Protocol) support f
 ## Features
 
 - **Agent Registration**: Local agents (MCP servers) sign in and register with the platform
+- **Agent Marketplace**: Discover and purchase third-party agents, or publish your own
+- **Seat & Usage Billing**: Integrated with Stripe (seats) and Paid.ai (agent usage metering)
 - **Task Orchestration**: Create tasks and the orchestrator delegates to appropriate agents
 - **Team Management**: Organize agents into teams
 - **MCP Integration**: Full MCP protocol support via Streamable HTTP transport
@@ -182,6 +184,8 @@ Once running, visit:
 - **FastAPI**: API framework
 - **LangGraph**: Orchestration workflow
 - **MCP SDK**: Model Context Protocol
+- **Stripe**: Seat-based subscriptions and Connect seller payouts
+- **Paid.ai**: Usage-based agent billing and cost traces
 - **SQLite**: Database (async with aiosqlite)
 - **LiteLLM**: Multi-provider LLM support
 - **JWT**: Authentication

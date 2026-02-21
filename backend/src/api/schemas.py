@@ -5,7 +5,15 @@ from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
-from src.core.state import AgentStatus, TaskStatus
+from src.core.state import (
+    AgentStatus,
+    PlanStatus,
+    RiskSeverity,
+    RiskSource,
+    SubtaskStatus,
+    TaskStatus,
+    UserRole,
+)
 
 
 # ============== User Schemas ==============
@@ -257,7 +265,6 @@ class ProjectCreate(BaseModel):
     milestones: list[dict[str, Any]] = Field(default_factory=list)
     timeline: dict[str, Any] = Field(default_factory=dict)
     github_repo: str | None = None
-    miro_board_id: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -268,7 +275,6 @@ class ProjectResponse(BaseModel):
     milestones: list[dict[str, Any]]
     timeline: dict[str, Any]
     github_repo: str | None
-    miro_board_id: str | None
     owner_id: str
     created_at: datetime
     updated_at: datetime | None
@@ -301,14 +307,207 @@ class PlanResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ============== TeamMember Schemas ==============
+
+
+class TeamMemberCreate(BaseModel):
+    """Schema for adding a team member to a project."""
+
+    user_id: str
+    project_id: str
+    role: UserRole = UserRole.DEVELOPER
+    skills: list[str] = Field(default_factory=list)
+    capacity: float = Field(1.0, ge=0.0, le=1.0)
+
+
+class TeamMemberResponse(BaseModel):
+    """Schema for team member response."""
+
+    id: str
+    user_id: str
+    project_id: str
+    role: str
+    skills: list[str]
+    capacity: float
+    current_load: float
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class TeamMemberUpdate(BaseModel):
+    """Schema for updating team member."""
+
+    role: UserRole | None = None
+    skills: list[str] | None = None
+    capacity: float | None = Field(None, ge=0.0, le=1.0)
+
+
+# ============== Subtask Schemas ==============
+
+
+class SubtaskCreate(BaseModel):
+    """Schema for creating a subtask."""
+
+    task_id: str
+    plan_id: str | None = None
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str | None = None
+    priority: int = 0
+    assignee_id: str | None = None
+    assigned_agent_id: str | None = None
+
+
+class SubtaskResponse(BaseModel):
+    """Schema for subtask response."""
+
+    id: str
+    task_id: str
+    plan_id: str | None
+    title: str
+    description: str | None
+    priority: int
+    status: str
+    assignee_id: str | None
+    assigned_agent_id: str | None
+    draft_version: int
+    risk_flags: list[str]
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class SubtaskDetail(SubtaskResponse):
+    """Detailed subtask response including draft and final content."""
+
+    draft_content: dict[str, Any] | None = None
+    draft_generated_at: datetime | None = None
+    draft_agent_id: str | None = None
+    final_content: dict[str, Any] | None = None
+    finalized_at: datetime | None = None
+    finalized_by_id: str | None = None
+
+
+class SubtaskUpdate(BaseModel):
+    """Schema for updating a subtask."""
+
+    title: str | None = None
+    description: str | None = None
+    priority: int | None = None
+    status: SubtaskStatus | None = None
+    assignee_id: str | None = None
+    assigned_agent_id: str | None = None
+
+
+class SubtaskFinalize(BaseModel):
+    """Schema for finalizing a subtask."""
+
+    final_content: dict[str, Any]
+
+
+# ============== RiskSignal Schemas ==============
+
+
+class RiskSignalCreate(BaseModel):
+    """Schema for creating a risk signal."""
+
+    project_id: str
+    task_id: str | None = None
+    subtask_id: str | None = None
+    source: RiskSource
+    severity: RiskSeverity
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str | None = None
+    rationale: str | None = None
+    recommended_action: str | None = None
+
+
+class RiskSignalResponse(BaseModel):
+    """Schema for risk signal response."""
+
+    id: str
+    project_id: str
+    task_id: str | None
+    subtask_id: str | None
+    source: str
+    severity: str
+    title: str
+    description: str | None
+    rationale: str | None
+    recommended_action: str | None
+    is_resolved: bool
+    resolved_at: datetime | None
+    resolved_by_id: str | None
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class RiskSignalResolve(BaseModel):
+    """Schema for resolving a risk signal."""
+
+    resolution_note: str | None = None
+
+
+# ============== AuditLog Schemas ==============
+
+
+class AuditLogResponse(BaseModel):
+    """Schema for audit log response."""
+
+    id: str
+    user_id: str | None
+    agent_id: str | None
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict[str, Any]
+    previous_state: dict[str, Any] | None
+    new_state: dict[str, Any] | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ============== Dashboard Schemas ==============
 
 
+class DeveloperDashboardResponse(BaseModel):
+    """Schema for developer dashboard response."""
+
+    user_id: str
+    assigned_tasks: list[TaskResponse] = Field(default_factory=list)
+    assigned_subtasks: list[SubtaskResponse] = Field(default_factory=list)
+    pending_reviews: list[SubtaskResponse] = Field(default_factory=list)
+    recent_risks: list[RiskSignalResponse] = Field(default_factory=list)
+    workload: float = 0.0
+
+
 class PMDashboardResponse(BaseModel):
+    """Schema for PM dashboard response."""
+
     project_id: str
     project: ProjectResponse
-    team_members: list = Field(default_factory=list)
+    team_members: list[TeamMemberResponse] = Field(default_factory=list)
     tasks_by_status: dict[str, int] = Field(default_factory=dict)
-    recent_plans: list = Field(default_factory=list)
-    open_risks: list = Field(default_factory=list)
-    critical_alerts: list = Field(default_factory=list)
+    recent_plans: list[PlanResponse] = Field(default_factory=list)
+    open_risks: list[RiskSignalResponse] = Field(default_factory=list)
+    critical_alerts: list[RiskSignalResponse] = Field(default_factory=list)
+
+
+# ============== Plan Submission Schema ==============
+
+
+class PlanSubmitForApproval(BaseModel):
+    """Schema for submitting a plan for PM approval."""
+
+    pass  # No additional fields needed, just changes status
+
+
+class PlanReject(BaseModel):
+    """Schema for rejecting a plan."""
+
+    rejection_reason: str = Field(..., min_length=1)

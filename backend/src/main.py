@@ -13,10 +13,16 @@ from src.api.routes import (
     health_router,
     plans_router,
     projects_router,
+    reviewer_router,
+    risks_router,
+    subtasks_router,
     tasks_router,
+    team_members_router,
     teams_router,
     users_router,
 )
+from src.api.marketplace import marketplace_router
+from src.api.billing import billing_router
 from src.config import get_settings
 from src.core.event_bus import get_event_bus
 from src.mcp_client.manager import get_mcp_manager
@@ -98,7 +104,13 @@ def create_app() -> FastAPI:
     # Add new routers
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(plans_router, prefix="/api/v1")
+    app.include_router(subtasks_router, prefix="/api/v1")
+    app.include_router(team_members_router, prefix="/api/v1")
+    app.include_router(risks_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
+    app.include_router(reviewer_router, prefix="/api/v1")
+    app.include_router(marketplace_router, prefix="/api/v1")
+    app.include_router(billing_router, prefix="/api/v1")
 
     return app
 

@@ -13,15 +13,8 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 
 ## Core Components
 - `frontend/`: React app for developer, PM, marketplace, and billing views.
-- `backend/api/`: Python API for ingestion, planning, approvals, agent execution, review, marketplace, and billing.
-- `backend/packages/shared-context`: schemas and services for shared context documents.
-- `backend/packages/orchestrator-core`: OA planning, assignment, explainability.
-- `backend/packages/agent-runtime`: hosted autonomous agent execution orchestration.
-- `backend/packages/reviewer-core`: final whole-task review and merge-readiness scoring.
-- `backend/packages/marketplace-core`: agent catalog, publish/private flags, project agent selection.
-- `backend/packages/billing-core`: Stripe seat subscription + Paid.ai usage metering integration.
-- `backend/packages/integrations`: GitHub adapter + vendor connectors.
-- `backend/packages/shared`: shared types, validation, auth helpers, constants.
+- `backend/`: Python API for ingestion, planning, approvals, agent execution, review, marketplace, and billing.
+- `docs/shared_context/`: Canonical markdown files serving as the shared orchestration memory.
 
 ## Shared Context Files (Canonical)
 - `docs/shared_context/PROJECT_OVERVIEW.md`
@@ -102,17 +95,7 @@ Monorepo architecture with a web app, Python API, shared context store, OA plann
 - Final-review-only reviewer flow in MVP.
 
 ## Repository Layout
-- `frontend`
-- `backend/api`
-- `backend/packages/shared-context`
-- `backend/packages/orchestrator-core`
-- `backend/packages/agent-runtime`
-- `backend/packages/reviewer-core`
-- `backend/packages/marketplace-core`
-- `backend/packages/billing-core`
-- `backend/packages/integrations`
-- `backend/packages/shared`
-- `docs/shared_context`
-- `tests/unit`
-- `tests/integration`
-- `tests/e2e`
+- `frontend/` (React + Vite + TypeScript + TailwindCSS)
+- `backend/` (FastAPI + LangGraph + SQLAlchemy + SQLite)
+- `docs/shared_context/` (Markdown state files)
+- `tests/`

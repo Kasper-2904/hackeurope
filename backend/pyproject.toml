@@ -11,29 +11,26 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic[email]>=2.9.0",
     "pydantic-settings>=2.6.0",
-    
     # MCP SDK
     "mcp>=1.0.0",
-    
     # LLM orchestration
     "langgraph>=0.2.0",
     "langchain-core>=0.3.0",
     "litellm>=1.50.0",
-    
     # Authentication
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.0",
     "python-multipart>=0.0.12",
-    
     # Database
     "sqlalchemy[asyncio]>=2.0.0",
     "aiosqlite>=0.20.0",
     "greenlet>=3.0.0",
-    
     # Async utilities
     "httpx>=0.27.0",
     "websockets>=13.0",
     "python-dotenv>=1.0.0",
+    "paid-python>=1.0.6",
+    "stripe>=14.3.0",
 ]
 
 [project.optional-dependencies]

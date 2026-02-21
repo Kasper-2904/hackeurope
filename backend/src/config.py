@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # Event Bus
     event_bus_max_queue_size: int = 1000
 
+    # Marketplace & Billing
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_connect_client_id: str = ""
+    paid_api_key: str = ""
+    paid_webhook_secret: str = ""
+    platform_commission_rate: float = 0.20
+    free_tier_daily_limit: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:
