@@ -1,283 +1,189 @@
 """
-LangGraph-based orchestrator for delegating tasks to agents.
+LangGraph-based orchestrator for planning tasks using Claude and shared context.
 
 The orchestrator:
-1. Receives tasks from the API
-2. Analyzes the task and creates a plan
-3. Routes tasks to appropriate agents based on their capabilities
-4. Manages the execution flow
-5. Aggregates results
+1. Gathers shared context (markdown files + live DB data)
+2. Calls Claude to generate an implementation plan
+3. Persists the plan to the database
 """
 
-from dataclasses import dataclass, field
+import json
 from datetime import datetime
 from typing import Any, Literal, TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
 from src.core.event_bus import Event, EventType, get_event_bus
-from src.core.state import AgentStatus, TaskStatus
-from src.mcp_client.manager import MCPClientManager, get_mcp_manager
+from src.core.state import PlanStatus
+from src.services.context_service import SharedContextService
+from src.services.llm_service import LLMService, get_llm_service
+from src.storage.models import Plan
+
+
+# ============== State ==============
 
 
 class OrchestratorState(TypedDict, total=False):
     """State that flows through the orchestration graph."""
 
-    # Task information
+    # Input
     task_id: str
-    task_type: str
+    task_title: str
     task_description: str
-    input_data: dict[str, Any]
+    project_id: str
+    db: Any  # AsyncSession (not serializable, passed through state)
 
-    # Planning
-    plan: list[dict[str, Any]]  # List of steps
-    current_step: int
+    # Context
+    shared_context: dict[str, Any]
 
-    # Execution
-    selected_agent_id: str | None
-    tool_name: str | None
-    tool_arguments: dict[str, Any]
-
-    # Results
-    step_results: list[dict[str, Any]]
-    final_result: str | None
-    error: str | None
+    # Plan output
+    plan_data: dict[str, Any]
+    plan_id: str | None
+    rationale: str | None
 
     # Status
-    status: str  # pending, planning, executing, completed, failed
+    status: str  # pending, gathering_context, planning, persisted, failed
+    error: str | None
 
 
 # ============== Node Functions ==============
 
 
-async def analyze_task(state: OrchestratorState) -> OrchestratorState:
-    """
-    Analyze the incoming task and determine what needs to be done.
-
-    This node examines the task type and description to understand
-    what tools and agents are needed.
-    """
+async def gather_context(state: OrchestratorState) -> OrchestratorState:
+    """Read shared context files and enrich with DB data."""
     event_bus = get_event_bus()
-
-    task_type = state.get("task_type", "")
-    description = state.get("task_description", "")
+    project_id = state.get("project_id", "")
+    db: AsyncSession = state["db"]
 
     await event_bus.publish(
         Event(
             type=EventType.TASK_STARTED,
             data={
                 "task_id": state.get("task_id"),
-                "task_type": task_type,
+                "phase": "gather_context",
             },
             source="orchestrator",
         )
     )
 
-    # Map task types to required capabilities
-    task_tool_mapping = {
-        "code_generation": ["generate_code", "write_file"],
-        "code_review": ["review_code", "check_security", "suggest_improvements"],
-        "test_generation": ["generate_tests", "run_tests"],
-        "documentation": ["generate_docs", "write_file"],
-        "bug_fix": ["read_file", "search_code", "write_file"],
-        "refactor": ["read_file", "review_code", "write_file"],
-    }
-
-    required_tools = task_tool_mapping.get(task_type, [])
-
-    # Create a simple plan based on task type
-    plan = []
-    for tool in required_tools:
-        plan.append(
-            {
-                "step": len(plan) + 1,
-                "action": "call_tool",
-                "tool": tool,
-                "status": "pending",
-            }
-        )
+    context_service = SharedContextService()
+    shared_context = await context_service.gather_context(project_id, db)
 
     return {
         **state,
-        "plan": plan,
-        "current_step": 0,
-        "step_results": [],
-        "status": "planning",
+        "shared_context": shared_context,
+        "status": "gathering_context",
     }
 
 
-async def select_agent(state: OrchestratorState) -> OrchestratorState:
-    """
-    Select the best agent for the current step.
-
-    Looks at available agents and their capabilities to find
-    the best match for the required tool.
-    """
-    mcp_manager = get_mcp_manager()
+async def generate_plan(state: OrchestratorState) -> OrchestratorState:
+    """Call Claude to generate an implementation plan from context + task."""
     event_bus = get_event_bus()
+    llm: LLMService = get_llm_service()
 
-    plan = state.get("plan", [])
-    current_step = state.get("current_step", 0)
+    task_title = state.get("task_title", "")
+    task_description = state.get("task_description", "")
+    shared_context = state.get("shared_context", {})
 
-    if current_step >= len(plan):
-        return {**state, "selected_agent_id": None}
+    # Build context summary for the prompt
+    context_summary = _build_context_summary(shared_context)
 
-    step = plan[current_step]
-    required_tool = step.get("tool", "")
-
-    # Find agents with the required tool
-    agents = mcp_manager.get_agents_with_tool(required_tool)
-
-    if not agents:
-        # No agent has the tool - try to find any online agent
-        agents = mcp_manager.get_online_agents()
-
-    if not agents:
-        await event_bus.publish(
-            Event(
-                type=EventType.SYSTEM_WARNING,
-                data={
-                    "task_id": state.get("task_id"),
-                    "message": f"No agents available for tool: {required_tool}",
-                },
-                source="orchestrator",
-            )
-        )
-        return {
-            **state,
-            "selected_agent_id": None,
-            "error": f"No agents available for tool: {required_tool}",
-            "status": "failed",
-        }
-
-    # Select the first available agent (could be enhanced with load balancing)
-    selected = agents[0]
-
-    await event_bus.publish(
-        Event(
-            type=EventType.TASK_ASSIGNED,
-            data={
-                "task_id": state.get("task_id"),
-                "agent_id": selected.agent_id,
-                "tool": required_tool,
-            },
-            source="orchestrator",
-            target=selected.agent_id,
-        )
+    system_prompt = (
+        "You are the Orchestration Agent (OA) for a software delivery platform. "
+        "Given a task and project context, generate an implementation plan.\n\n"
+        "Your plan must include:\n"
+        "1. A list of subtasks with titles and descriptions\n"
+        "2. For each subtask, a suggested specialist agent type (coder, reviewer, tester, docs)\n"
+        "3. A suggested team member assignment (by role: developer or pm)\n"
+        "4. Risk flags if any\n"
+        "5. A short rationale explaining your approach\n\n"
+        "Respond in JSON with this structure:\n"
+        "{\n"
+        '  "subtasks": [\n'
+        '    {"title": "...", "description": "...", "agent_type": "...", '
+        '"assignee_role": "developer", "priority": 1, "risk_flags": []}\n'
+        "  ],\n"
+        '  "rationale": "..."\n'
+        "}"
     )
 
-    return {
-        **state,
-        "selected_agent_id": selected.agent_id,
-        "tool_name": required_tool,
-        "status": "executing",
-    }
-
-
-async def execute_tool(state: OrchestratorState) -> OrchestratorState:
-    """
-    Execute the tool on the selected agent.
-    """
-    mcp_manager = get_mcp_manager()
-    event_bus = get_event_bus()
-
-    agent_id = state.get("selected_agent_id")
-    tool_name = state.get("tool_name")
-    input_data = state.get("input_data", {})
-
-    if not agent_id or not tool_name:
-        return {
-            **state,
-            "error": "No agent or tool selected",
-            "status": "failed",
-        }
-
-    # Prepare tool arguments based on input data
-    tool_arguments = _prepare_tool_arguments(tool_name, input_data)
-
-    # Call the tool
-    result = await mcp_manager.call_tool(agent_id, tool_name, tool_arguments)
-
-    # Record the result
-    step_results = state.get("step_results", [])
-    step_results.append(
-        {
-            "step": state.get("current_step", 0) + 1,
-            "agent_id": agent_id,
-            "tool": tool_name,
-            "arguments": tool_arguments,
-            "result": result,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+    user_message = (
+        f"## Task\n**{task_title}**\n{task_description}\n\n"
+        f"## Project Context\n{context_summary}"
     )
-
-    # Update plan status
-    plan = state.get("plan", [])
-    current_step = state.get("current_step", 0)
-    if current_step < len(plan):
-        plan[current_step]["status"] = "completed" if result.get("success") else "failed"
-        plan[current_step]["result"] = result
 
     await event_bus.publish(
         Event(
             type=EventType.TASK_PROGRESS,
             data={
                 "task_id": state.get("task_id"),
-                "step": current_step + 1,
-                "total_steps": len(plan),
-                "result": result,
+                "phase": "generate_plan",
+                "message": "Calling Claude to generate plan...",
             },
             source="orchestrator",
         )
     )
 
+    try:
+        plan_data = await llm.complete_json(
+            system=system_prompt,
+            user_message=user_message,
+        )
+    except Exception as e:
+        return {
+            **state,
+            "plan_data": {},
+            "error": f"LLM call failed: {e}",
+            "status": "failed",
+        }
+
+    # Validate minimum structure
+    if "subtasks" not in plan_data:
+        return {
+            **state,
+            "plan_data": plan_data,
+            "error": "LLM response missing 'subtasks' key",
+            "status": "failed",
+        }
+
     return {
         **state,
-        "plan": plan,
-        "step_results": step_results,
-        "current_step": current_step + 1,
+        "plan_data": plan_data,
+        "rationale": plan_data.get("rationale", ""),
+        "status": "planning",
     }
 
 
-async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
-    """
-    Aggregate results from all steps into a final result.
-    """
+async def persist_plan(state: OrchestratorState) -> OrchestratorState:
+    """Save the generated plan to the database as a draft."""
     event_bus = get_event_bus()
+    db: AsyncSession = state["db"]
 
-    step_results = state.get("step_results", [])
+    plan_data = state.get("plan_data", {})
+    if not plan_data or state.get("status") == "failed":
+        return state
 
-    # Combine all results
-    final_parts = []
-    for result in step_results:
-        tool = result.get("tool", "unknown")
-        tool_result = result.get("result", {})
-
-        if tool_result.get("success"):
-            content = tool_result.get("content", [])
-            for c in content:
-                if c.get("type") == "text":
-                    final_parts.append(f"## {tool}\n{c.get('text', '')}")
-        else:
-            final_parts.append(
-                f"## {tool} (failed)\nError: {tool_result.get('error', 'Unknown error')}"
-            )
-
-    final_result = "\n\n".join(final_parts) if final_parts else "No results generated."
-
-    # Check if any step failed
-    has_errors = any(not r.get("result", {}).get("success", True) for r in step_results)
-
-    status = "completed" if not has_errors else "completed_with_errors"
+    plan_id = str(uuid4())
+    plan = Plan(
+        id=plan_id,
+        task_id=state["task_id"],
+        project_id=state["project_id"],
+        plan_data=plan_data,
+        rationale=state.get("rationale"),
+        status=PlanStatus.DRAFT.value,
+    )
+    db.add(plan)
+    await db.flush()
 
     await event_bus.publish(
         Event(
             type=EventType.TASK_COMPLETED,
             data={
                 "task_id": state.get("task_id"),
-                "status": status,
-                "step_count": len(step_results),
+                "plan_id": plan_id,
+                "subtask_count": len(plan_data.get("subtasks", [])),
             },
             source="orchestrator",
         )
@@ -285,62 +191,76 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
 
     return {
         **state,
-        "final_result": final_result,
-        "status": status,
+        "plan_id": plan_id,
+        "status": "persisted",
     }
 
 
-def _prepare_tool_arguments(tool_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
-    """Prepare arguments for a tool based on the tool name and input data."""
-    # Map common input fields to tool arguments
-    if tool_name in ("read_file", "write_file", "review_file"):
-        return {"file_path": input_data.get("file_path", input_data.get("path", ""))}
-
-    if tool_name == "generate_code":
-        return {
-            "task_description": input_data.get("description", ""),
-            "language": input_data.get("language", "python"),
-        }
-
-    if tool_name == "review_code":
-        return {
-            "code": input_data.get("code", ""),
-            "language": input_data.get("language", "python"),
-        }
-
-    if tool_name == "search_code":
-        return {
-            "directory": input_data.get("directory", "."),
-            "pattern": input_data.get("pattern", input_data.get("search", "")),
-        }
-
-    # Default: pass through input_data
-    return input_data
+# ============== Helpers ==============
 
 
-# ============== Routing Functions ==============
+def _build_context_summary(ctx: dict[str, Any]) -> str:
+    """Build a readable text summary from shared context for the LLM prompt."""
+    parts = []
+
+    # Project info
+    project = ctx.get("project", {})
+    if project:
+        parts.append(f"**Project:** {project.get('name', 'N/A')}")
+        if project.get("description"):
+            parts.append(f"Description: {project['description']}")
+        if project.get("goals"):
+            parts.append(f"Goals: {', '.join(project['goals'])}")
+
+    # Team
+    members = ctx.get("team_members_db", [])
+    if members:
+        member_lines = [
+            f"- {m['role']}: skills={m['skills']}, capacity={m['capacity']}"
+            for m in members
+        ]
+        parts.append(f"**Team ({len(members)} members):**\n" + "\n".join(member_lines))
+
+    # Existing tasks
+    tasks = ctx.get("tasks_db", [])
+    if tasks:
+        task_lines = [f"- [{t['status']}] {t['title']}" for t in tasks]
+        parts.append(f"**Existing Tasks ({len(tasks)}):**\n" + "\n".join(task_lines))
+
+    # GitHub
+    gh = ctx.get("github_context", {})
+    if gh:
+        prs = gh.get("pull_requests", [])
+        if prs:
+            parts.append(f"**Open PRs:** {len(prs)}")
+        ci = gh.get("ci_status", [])
+        failures = [c for c in ci if c.get("conclusion") == "failure"]
+        if failures:
+            parts.append(f"**CI Failures:** {len(failures)}")
+
+    # Risks
+    risks = ctx.get("open_risks", [])
+    if risks:
+        risk_lines = [f"- [{r['severity']}] {r['title']}" for r in risks]
+        parts.append(f"**Open Risks ({len(risks)}):**\n" + "\n".join(risk_lines))
+
+    # Static context snippets (only include non-empty)
+    for key in ("project_overview", "project_plan", "task_graph"):
+        content = ctx.get(key, "").strip()
+        if content and len(content) > 50:  # Skip empty templates
+            parts.append(f"**{key}:**\n{content[:2000]}")
+
+    return "\n\n".join(parts) if parts else "No project context available."
 
 
-def should_continue(state: OrchestratorState) -> Literal["select_agent", "aggregate"]:
-    """Determine if we should continue executing or aggregate results."""
-    plan = state.get("plan", [])
-    current_step = state.get("current_step", 0)
-    status = state.get("status", "")
-
-    if status == "failed":
-        return "aggregate"
-
-    if current_step >= len(plan):
-        return "aggregate"
-
-    return "select_agent"
+# ============== Routing ==============
 
 
-def check_agent_selection(state: OrchestratorState) -> Literal["execute", "aggregate"]:
-    """Check if agent selection was successful."""
-    if state.get("selected_agent_id") is None:
-        return "aggregate"
-    return "execute"
+def check_plan_status(state: OrchestratorState) -> Literal["persist", "end"]:
+    """Route based on whether planning succeeded."""
+    if state.get("status") == "failed":
+        return "end"
+    return "persist"
 
 
 # ============== Graph Builder ==============
@@ -350,56 +270,30 @@ def build_orchestrator_graph() -> StateGraph:
     """
     Build the LangGraph orchestration graph.
 
-    The graph flow:
-    1. analyze_task: Understand the task and create a plan
-    2. select_agent: Choose an agent for the current step
-    3. execute_tool: Run the tool on the agent
-    4. Loop back to select_agent or go to aggregate
-    5. aggregate_results: Combine all results
-
-    ```
-    START -> analyze_task -> select_agent -> execute_tool -> should_continue?
-                                  ^                              |
-                                  |______________________________|
-                                                |
-                                         aggregate_results -> END
-    ```
+    Flow:
+    START -> gather_context -> generate_plan -> persist_plan -> END
+                                    |
+                               (if failed) -> END
     """
-    # Create the graph
     graph = StateGraph(OrchestratorState)
 
-    # Add nodes
-    graph.add_node("analyze_task", analyze_task)
-    graph.add_node("select_agent", select_agent)
-    graph.add_node("execute_tool", execute_tool)
-    graph.add_node("aggregate_results", aggregate_results)
+    graph.add_node("gather_context", gather_context)
+    graph.add_node("generate_plan", generate_plan)
+    graph.add_node("persist_plan", persist_plan)
 
-    # Add edges
-    graph.set_entry_point("analyze_task")
-    graph.add_edge("analyze_task", "select_agent")
+    graph.set_entry_point("gather_context")
+    graph.add_edge("gather_context", "generate_plan")
 
-    # Conditional edge after agent selection
     graph.add_conditional_edges(
-        "select_agent",
-        check_agent_selection,
+        "generate_plan",
+        check_plan_status,
         {
-            "execute": "execute_tool",
-            "aggregate": "aggregate_results",
+            "persist": "persist_plan",
+            "end": END,
         },
     )
 
-    # Conditional edge after execution
-    graph.add_conditional_edges(
-        "execute_tool",
-        should_continue,
-        {
-            "select_agent": "select_agent",
-            "aggregate": "aggregate_results",
-        },
-    )
-
-    # End after aggregation
-    graph.add_edge("aggregate_results", END)
+    graph.add_edge("persist_plan", END)
 
     return graph
 
@@ -408,68 +302,49 @@ def build_orchestrator_graph() -> StateGraph:
 
 
 class Orchestrator:
-    """
-    Main orchestrator class that manages task execution.
-
-    Usage:
-        orchestrator = Orchestrator()
-        result = await orchestrator.execute_task(
-            task_id="123",
-            task_type="code_review",
-            description="Review the auth module",
-            input_data={"file_path": "src/auth.py"}
-        )
-    """
+    """Main orchestrator — generates Claude-powered implementation plans."""
 
     def __init__(self):
         self._graph = build_orchestrator_graph()
         self._compiled = self._graph.compile()
 
-    async def execute_task(
+    async def generate_plan(
         self,
+        *,
         task_id: str,
-        task_type: str,
-        description: str,
-        input_data: dict[str, Any] | None = None,
+        task_title: str,
+        task_description: str,
+        project_id: str,
+        db: AsyncSession,
     ) -> dict[str, Any]:
-        """
-        Execute a task through the orchestration pipeline.
-
-        Args:
-            task_id: Unique task identifier
-            task_type: Type of task (code_generation, code_review, etc.)
-            description: Task description
-            input_data: Additional input data for the task
+        """Generate an implementation plan for a task.
 
         Returns:
-            Final state with results
+            Dict with plan_id, status, plan_data, rationale, error.
         """
         initial_state: OrchestratorState = {
             "task_id": task_id,
-            "task_type": task_type,
-            "task_description": description,
-            "input_data": input_data or {},
-            "plan": [],
-            "current_step": 0,
-            "selected_agent_id": None,
-            "tool_name": None,
-            "tool_arguments": {},
-            "step_results": [],
-            "final_result": None,
-            "error": None,
+            "task_title": task_title,
+            "task_description": task_description,
+            "project_id": project_id,
+            "db": db,
+            "shared_context": {},
+            "plan_data": {},
+            "plan_id": None,
+            "rationale": None,
             "status": "pending",
+            "error": None,
         }
 
-        # Run the graph
         final_state = await self._compiled.ainvoke(initial_state)
 
         return {
             "task_id": task_id,
+            "plan_id": final_state.get("plan_id"),
             "status": final_state.get("status"),
-            "result": final_state.get("final_result"),
+            "plan_data": final_state.get("plan_data"),
+            "rationale": final_state.get("rationale"),
             "error": final_state.get("error"),
-            "steps": final_state.get("step_results"),
-            "plan": final_state.get("plan"),
         }
 
 

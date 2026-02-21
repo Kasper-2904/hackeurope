@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 hours
     jwt_refresh_token_expire_days: int = 7
 
-    # LLM Configuration (via LiteLLM)
-    default_llm_model: str = "anthropic/claude-sonnet-4-20250514"
+    # LLM Configuration
+    default_llm_model: str = "claude-sonnet-4-20250514"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
 

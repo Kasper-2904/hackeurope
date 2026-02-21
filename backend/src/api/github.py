@@ -5,12 +5,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from src.api.auth import get_current_user
 from src.api.schemas_github import GitHubContextResponse, GitHubSyncResponse
 from src.core.event_bus import Event, EventType, get_event_bus
 from src.services.github_service import GitHubService
 from src.storage.database import get_db
-from src.storage.models import User
+from src.storage.models import Project, User
 
 github_router = APIRouter(prefix="/projects", tags=["GitHub"])
 
@@ -37,6 +39,15 @@ async def sync_github(
     event_bus = get_event_bus()
     service = get_github_service()
 
+    # Verify project belongs to current user
+    proj_result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
     await event_bus.publish(
         Event(
             type=EventType.GITHUB_SYNC_STARTED,
@@ -46,9 +57,7 @@ async def sync_github(
     )
 
     try:
-        result = service.sync_project(project_id, db)
-        # sync_project is async
-        result = await result
+        result = await service.sync_project(project_id, db)
 
         await event_bus.publish(
             Event(
@@ -83,6 +92,15 @@ async def get_github_context(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Get the cached GitHub context for a project."""
+    # Verify project belongs to current user
+    proj_result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.owner_id == current_user.id)
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
     service = get_github_service()
     ctx = await service.get_context(project_id, db)
 

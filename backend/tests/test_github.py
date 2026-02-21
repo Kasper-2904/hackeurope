@@ -214,3 +214,20 @@ async def test_sync_project_creates_risk_signals(db_session: AsyncSession):
     severities = {r.source: r.severity for r in risks}
     assert severities["merge_conflict"] == "high"
     assert severities["ci_failure"] == "medium"
+
+
+async def test_sync_project_is_idempotent(db_session: AsyncSession):
+    """Syncing twice should not duplicate risk signals."""
+    project = await _make_project(db_session)
+    service = GitHubService(provider=MockGitHubProvider())
+
+    await service.sync_project(project.id, db_session)
+    await service.sync_project(project.id, db_session)
+
+    from sqlalchemy import select
+
+    result = await db_session.execute(
+        select(RiskSignal).where(RiskSignal.project_id == project.id)
+    )
+    risks = list(result.scalars().all())
+    assert len(risks) == 2  # Not 4 — dedup prevents duplicates

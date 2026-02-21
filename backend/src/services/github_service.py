@@ -229,18 +229,29 @@ class GitHubService:
         ctx.last_synced_at = now
         ctx.sync_error = None
 
-        # Auto-create risk signals
+        # Auto-create risk signals (deduplicated — skip if matching open signal exists)
         risks_created = 0
 
         # Merge conflicts → HIGH severity
         for pr in prs:
             if pr.has_conflicts:
+                title = f"Merge conflict in PR #{pr.number}: {pr.title}"
+                existing = await db.execute(
+                    select(RiskSignal).where(
+                        RiskSignal.project_id == project_id,
+                        RiskSignal.source == RiskSource.MERGE_CONFLICT.value,
+                        RiskSignal.title == title,
+                        RiskSignal.is_resolved == False,  # noqa: E712
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
                 risk = RiskSignal(
                     id=str(uuid4()),
                     project_id=project_id,
                     source=RiskSource.MERGE_CONFLICT.value,
                     severity=RiskSeverity.HIGH.value,
-                    title=f"Merge conflict in PR #{pr.number}: {pr.title}",
+                    title=title,
                     description=f"PR #{pr.number} ({pr.head_branch} -> {pr.base_branch}) has merge conflicts that need resolution.",
                     recommended_action="Resolve merge conflicts and update the PR.",
                 )
@@ -250,12 +261,23 @@ class GitHubService:
         # CI failures → MEDIUM severity
         for ci in ci_checks:
             if ci.conclusion == "failure":
+                title = f"CI check '{ci.name}' failed"
+                existing = await db.execute(
+                    select(RiskSignal).where(
+                        RiskSignal.project_id == project_id,
+                        RiskSignal.source == RiskSource.CI_FAILURE.value,
+                        RiskSignal.title == title,
+                        RiskSignal.is_resolved == False,  # noqa: E712
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
                 risk = RiskSignal(
                     id=str(uuid4()),
                     project_id=project_id,
                     source=RiskSource.CI_FAILURE.value,
                     severity=RiskSeverity.MEDIUM.value,
-                    title=f"CI check '{ci.name}' failed",
+                    title=title,
                     description=f"CI check '{ci.name}' failed{f' on PR #{ci.pr_number}' if ci.pr_number else ''}.",
                     recommended_action=f"Investigate and fix the failing '{ci.name}' check.",
                 )

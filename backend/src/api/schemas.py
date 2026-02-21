@@ -511,3 +511,38 @@ class PlanReject(BaseModel):
     """Schema for rejecting a plan."""
 
     rejection_reason: str = Field(..., min_length=1)
+
+
+class PlanGenerate(BaseModel):
+    """Schema for OA-driven plan generation from task + project context."""
+
+    task_id: str
+    project_id: str
+
+
+class PlanGenerateResponse(BaseModel):
+    """Response from OA plan generation."""
+
+    task_id: str
+    plan_id: str | None
+    status: str
+    plan_data: dict[str, Any] = Field(default_factory=dict)
+    rationale: str | None = None
+    error: str | None = None
+
+
+class ReviewerFinalizeRequest(BaseModel):
+    """Request body for reviewer finalize endpoint."""
+
+    project_id: str
+
+
+class ReviewerFinalizeResponse(BaseModel):
+    """Response from reviewer analysis."""
+
+    task_id: str
+    merge_ready: bool
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    risks_created: int = 0
+    summary: str = ""
+    error: str | None = None
