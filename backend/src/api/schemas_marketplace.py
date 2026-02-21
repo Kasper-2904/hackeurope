@@ -1,7 +1,9 @@
 """Schemas for marketplace and billing."""
 
-from pydantic import BaseModel
+from datetime import datetime
 from typing import Optional
+
+from pydantic import AnyHttpUrl, BaseModel
 from src.core.state import PricingType
 
 
@@ -77,8 +79,45 @@ class AgentSubscriptionResponse(BaseModel):
 
 class SubscriptionCreateRequest(BaseModel):
     team_id: str
-    success_url: str
-    cancel_url: str
+    success_url: AnyHttpUrl
+    cancel_url: AnyHttpUrl
+
+
+class SubscriptionCreateResponse(BaseModel):
+    checkout_url: str
+    team_id: str
+
+
+class BillingSubscriptionSnapshotResponse(BaseModel):
+    status: str
+    active_agent_subscriptions: int
+    stripe_subscription_id: str | None = None
+    seat_count: int | None = None
+
+
+class BillingUsageByAgentResponse(BaseModel):
+    marketplace_agent_id: str
+    marketplace_agent_name: str
+    total_quantity: int
+    total_cost: float
+
+
+class BillingUsageRecordResponse(BaseModel):
+    id: str
+    marketplace_agent_id: str
+    marketplace_agent_name: str
+    usage_type: str
+    quantity: int
+    cost: float
+    created_at: datetime
+
+
+class BillingSummaryResponse(BaseModel):
+    team_id: str
+    subscription: BillingSubscriptionSnapshotResponse
+    total_usage_cost: float
+    usage_by_agent: list[BillingUsageByAgentResponse]
+    recent_usage: list[BillingUsageRecordResponse]
 
 
 class SellerOnboardRequest(BaseModel):

@@ -36,6 +36,9 @@ export function AppShell() {
             <NavLink to="/context" className={navLinkClass}>
               Context
             </NavLink>
+            <NavLink to="/billing" className={navLinkClass}>
+              Billing
+            </NavLink>
             <button
               type="button"
               onClick={handleLogout}

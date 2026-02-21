@@ -11,6 +11,7 @@ import ContextExplorerPage from '@/pages/ContextExplorerPage'
 import { LoginPage } from '@/pages/LoginPage'
 import MarketplacePage from '@/pages/MarketplacePage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
+import BillingPage from '@/pages/BillingPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
 import ProjectsPage from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
@@ -42,7 +43,7 @@ function App() {
                   <Route path="/context" element={<ContextExplorerPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
                   <Route path="/projects/:id" element={<ProjectDetailPage />} />
-                  <Route path="/billing" element={<div>Billing - Marin M3-T4</div>} />
+                  <Route path="/billing" element={<BillingPage />} />
                 </Route>
               </Route>
 

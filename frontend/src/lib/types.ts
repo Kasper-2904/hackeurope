@@ -97,6 +97,49 @@ export interface Team {
   agent_count: number;
 }
 
+export interface BillingSubscriptionSnapshot {
+  status: string;
+  active_agent_subscriptions: number;
+  stripe_subscription_id: string | null;
+  seat_count: number | null;
+}
+
+export interface BillingUsageByAgent {
+  marketplace_agent_id: string;
+  marketplace_agent_name: string;
+  total_quantity: number;
+  total_cost: number;
+}
+
+export interface BillingUsageRecord {
+  id: string;
+  marketplace_agent_id: string;
+  marketplace_agent_name: string;
+  usage_type: string;
+  quantity: number;
+  cost: number;
+  created_at: string;
+}
+
+export interface BillingSummary {
+  team_id: string;
+  subscription: BillingSubscriptionSnapshot;
+  total_usage_cost: number;
+  usage_by_agent: BillingUsageByAgent[];
+  recent_usage: BillingUsageRecord[];
+}
+
+export interface BillingSubscribeRequest {
+  team_id: string;
+  success_url: string;
+  cancel_url: string;
+}
+
+export interface BillingSubscribeResponse {
+  checkout_url: string;
+  team_id: string;
+}
+
 export interface Project {
   id: string;
   name: string;

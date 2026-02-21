@@ -862,3 +862,320 @@ class TestVerifyAgentSubscription(TestBillingFixtures):
 
         assert exc_info.value.status_code == 403
         assert "don't have access" in exc_info.value.detail
+
+
+# ============== M3-T4 Billing Summary + Subscribe API Tests ==============
+
+from datetime import datetime, timedelta, timezone
+
+from httpx import ASGITransport, AsyncClient
+
+from src.main import create_app
+from src.storage.models import UsageRecord
+
+
+def _make_user_api(suffix: str) -> User:
+    return User(
+        id=str(uuid4()),
+        email=f"{suffix}-{uuid4().hex[:6]}@example.com",
+        username=f"{suffix}-{uuid4().hex[:6]}",
+        hashed_password="hashed",
+    )
+
+
+@pytest.fixture
+async def api_client(db_session: AsyncSession):
+    app = create_app()
+    context: dict[str, User | None] = {"current_user": None}
+
+    async def override_get_db():
+        yield db_session
+
+    async def override_get_current_user() -> User:
+        user = context["current_user"]
+        if user is None:
+            raise HTTPException(status_code=401, detail="Could not validate credentials")
+        return user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client, context
+
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_billing_summary_aggregates_usage_and_recent_records(api_client, db_session: AsyncSession):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    db_session.add(owner)
+
+    team = Team(
+        id=str(uuid4()),
+        name="Billing Team",
+        owner_id=owner.id,
+        settings={
+            "subscription_status": "active",
+            "stripe_subscription_id": "sub_123",
+            "seat_count": 4,
+        },
+    )
+    db_session.add(team)
+
+    seller = _make_user_api("seller")
+    db_session.add(seller)
+
+    agent_one = Agent(
+        id=str(uuid4()),
+        name="Code Agent",
+        role="coder",
+        inference_endpoint="https://agent-one.example.com/v1",
+        owner_id=seller.id,
+    )
+    agent_two = Agent(
+        id=str(uuid4()),
+        name="Review Agent",
+        role="reviewer",
+        inference_endpoint="https://agent-two.example.com/v1",
+        owner_id=seller.id,
+    )
+    db_session.add(agent_one)
+    db_session.add(agent_two)
+
+    market_one = MarketplaceAgent(
+        id=str(uuid4()),
+        agent_id=agent_one.id,
+        seller_id=seller.id,
+        name="Code Agent Pro",
+        category="coder",
+    )
+    market_two = MarketplaceAgent(
+        id=str(uuid4()),
+        agent_id=agent_two.id,
+        seller_id=seller.id,
+        name="Review Agent Pro",
+        category="reviewer",
+    )
+    db_session.add(market_one)
+    db_session.add(market_two)
+
+    now = datetime.now(tz=timezone.utc)
+    usage_old = UsageRecord(
+        id=str(uuid4()),
+        team_id=team.id,
+        marketplace_agent_id=market_one.id,
+        usage_type="task_completion",
+        quantity=2,
+        cost=3.5,
+        created_at=now - timedelta(minutes=10),
+    )
+    usage_new = UsageRecord(
+        id=str(uuid4()),
+        team_id=team.id,
+        marketplace_agent_id=market_two.id,
+        usage_type="tool_call",
+        quantity=1,
+        cost=5.0,
+        created_at=now,
+    )
+    db_session.add(usage_old)
+    db_session.add(usage_new)
+
+    db_session.add(
+        AgentSubscription(
+            id=str(uuid4()),
+            team_id=team.id,
+            marketplace_agent_id=market_one.id,
+            status="active",
+        )
+    )
+
+    await db_session.commit()
+    context["current_user"] = owner
+
+    response = await client.get(f"/api/v1/billing/summary/{team.id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["team_id"] == team.id
+    assert payload["total_usage_cost"] == pytest.approx(8.5)
+    assert payload["subscription"] == {
+        "status": "active",
+        "active_agent_subscriptions": 1,
+        "stripe_subscription_id": "sub_123",
+        "seat_count": 4,
+    }
+    assert len(payload["usage_by_agent"]) == 2
+    assert payload["usage_by_agent"][0]["marketplace_agent_name"] == "Review Agent Pro"
+    assert payload["usage_by_agent"][0]["total_cost"] == pytest.approx(5.0)
+    assert payload["recent_usage"][0]["id"] == usage_new.id
+    assert payload["recent_usage"][1]["id"] == usage_old.id
+
+
+@pytest.mark.asyncio
+async def test_billing_summary_returns_404_for_non_owned_team(api_client, db_session: AsyncSession):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    outsider = _make_user_api("outsider")
+    db_session.add(owner)
+    db_session.add(outsider)
+
+    team = Team(id=str(uuid4()), name="Owner Team", owner_id=owner.id)
+    db_session.add(team)
+    await db_session.commit()
+
+    context["current_user"] = outsider
+
+    response = await client.get(f"/api/v1/billing/summary/{team.id}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Team not found"}
+
+
+@pytest.mark.asyncio
+async def test_billing_summary_returns_empty_payload_without_usage(api_client, db_session: AsyncSession):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    db_session.add(owner)
+
+    team = Team(id=str(uuid4()), name="Empty Team", owner_id=owner.id, settings={})
+    db_session.add(team)
+    await db_session.commit()
+
+    context["current_user"] = owner
+
+    response = await client.get(f"/api/v1/billing/summary/{team.id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload.keys()) == {
+        "team_id",
+        "subscription",
+        "total_usage_cost",
+        "usage_by_agent",
+        "recent_usage",
+    }
+    assert payload["team_id"] == team.id
+    assert payload["total_usage_cost"] == pytest.approx(0.0)
+    assert payload["usage_by_agent"] == []
+    assert payload["recent_usage"] == []
+    assert payload["subscription"] == {
+        "status": "unknown",
+        "active_agent_subscriptions": 0,
+        "stripe_subscription_id": None,
+        "seat_count": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_subscribe_returns_typed_payload_and_stable_error(api_client, db_session: AsyncSession, monkeypatch):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    db_session.add(owner)
+
+    team = Team(id=str(uuid4()), name="Billing Team", owner_id=owner.id)
+    db_session.add(team)
+    await db_session.commit()
+
+    context["current_user"] = owner
+
+    class StripeStub:
+        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+            return f"https://checkout.stripe.test/session/{team_id}"
+
+    monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeStub())
+
+    success_payload = {
+        "team_id": team.id,
+        "success_url": "https://app.example.com/billing?result=success",
+        "cancel_url": "https://app.example.com/billing?result=cancel",
+    }
+    success_response = await client.post("/api/v1/billing/subscribe", json=success_payload)
+
+    assert success_response.status_code == 200
+    assert success_response.json() == {
+        "checkout_url": f"https://checkout.stripe.test/session/{team.id}",
+        "team_id": team.id,
+    }
+
+    class StripeFailStub:
+        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+            raise RuntimeError("stripe down")
+
+    monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeFailStub())
+
+    error_response = await client.post("/api/v1/billing/subscribe", json=success_payload)
+
+    assert error_response.status_code == 502
+    assert error_response.json() == {"detail": "Unable to create checkout session"}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_returns_404_for_unknown_or_non_owned_team(api_client, db_session: AsyncSession):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    outsider = _make_user_api("outsider")
+    db_session.add(owner)
+    db_session.add(outsider)
+
+    team = Team(id=str(uuid4()), name="Owner Team", owner_id=owner.id)
+    db_session.add(team)
+    await db_session.commit()
+
+    context["current_user"] = owner
+    unknown_team_payload = {
+        "team_id": str(uuid4()),
+        "success_url": "https://app.example.com/billing?result=success",
+        "cancel_url": "https://app.example.com/billing?result=cancel",
+    }
+    unknown_response = await client.post("/api/v1/billing/subscribe", json=unknown_team_payload)
+    assert unknown_response.status_code == 404
+    assert unknown_response.json() == {"detail": "Team not found"}
+
+    context["current_user"] = outsider
+    non_owner_payload = {
+        "team_id": team.id,
+        "success_url": "https://app.example.com/billing?result=success",
+        "cancel_url": "https://app.example.com/billing?result=cancel",
+    }
+    non_owner_response = await client.post("/api/v1/billing/subscribe", json=non_owner_payload)
+    assert non_owner_response.status_code == 404
+    assert non_owner_response.json() == {"detail": "Team not found"}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_returns_400_for_checkout_validation_error(api_client, db_session: AsyncSession, monkeypatch):
+    client, context = api_client
+
+    owner = _make_user_api("owner")
+    db_session.add(owner)
+
+    team = Team(id=str(uuid4()), name="Billing Team", owner_id=owner.id)
+    db_session.add(team)
+    await db_session.commit()
+
+    context["current_user"] = owner
+
+    class StripeValidationStub:
+        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+            raise ValueError("Invalid checkout URL")
+
+    monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeValidationStub())
+
+    payload = {
+        "team_id": team.id,
+        "success_url": "https://app.example.com/billing?result=success",
+        "cancel_url": "https://app.example.com/billing?result=cancel",
+    }
+    response = await client.post("/api/v1/billing/subscribe", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid checkout URL"}

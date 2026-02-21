@@ -9,7 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
-from src.api.schemas_marketplace import SellerOnboardRequest, SubscriptionCreateRequest
+from src.api.schemas_marketplace import (
+    BillingSubscriptionSnapshotResponse,
+    BillingSummaryResponse,
+    BillingUsageByAgentResponse,
+    BillingUsageRecordResponse,
+    SellerOnboardRequest,
+    SubscriptionCreateRequest,
+    SubscriptionCreateResponse,
+)
 from src.config import get_settings
 from src.core.state import PricingType, SubscriptionStatus
 from src.services.stripe_service import get_stripe_service
@@ -29,12 +37,100 @@ billing_router = APIRouter(prefix="/billing", tags=["Billing"])
 # ============== Team Subscription (Platform Seats) ==============
 
 
-@billing_router.post("/subscribe")
+@billing_router.get("/summary/{team_id}", response_model=BillingSummaryResponse)
+async def get_billing_summary(
+    team_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BillingSummaryResponse:
+    """Return workspace billing summary for owned team."""
+    team_result = await db.execute(
+        select(Team).where(Team.id == team_id, Team.owner_id == current_user.id)
+    )
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    total_cost_result = await db.execute(
+        select(func.coalesce(func.sum(UsageRecord.cost), 0.0)).where(UsageRecord.team_id == team_id)
+    )
+    total_usage_cost = float(total_cost_result.scalar_one())
+
+    by_agent_result = await db.execute(
+        select(
+            UsageRecord.marketplace_agent_id,
+            func.coalesce(MarketplaceAgent.name, "Unknown agent"),
+            func.coalesce(func.sum(UsageRecord.quantity), 0),
+            func.coalesce(func.sum(UsageRecord.cost), 0.0),
+        )
+        .select_from(UsageRecord)
+        .join(MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True)
+        .where(UsageRecord.team_id == team_id)
+        .group_by(UsageRecord.marketplace_agent_id, MarketplaceAgent.name)
+        .order_by(func.sum(UsageRecord.cost).desc(), UsageRecord.marketplace_agent_id.asc())
+    )
+    usage_by_agent = [
+        BillingUsageByAgentResponse(
+            marketplace_agent_id=agent_id,
+            marketplace_agent_name=agent_name,
+            total_quantity=int(total_quantity),
+            total_cost=float(total_cost),
+        )
+        for agent_id, agent_name, total_quantity, total_cost in by_agent_result.all()
+    ]
+
+    recent_usage_result = await db.execute(
+        select(UsageRecord, MarketplaceAgent.name)
+        .select_from(UsageRecord)
+        .join(MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True)
+        .where(UsageRecord.team_id == team_id)
+        .order_by(UsageRecord.created_at.desc(), UsageRecord.id.desc())
+        .limit(20)
+    )
+    recent_usage = [
+        BillingUsageRecordResponse(
+            id=record.id,
+            marketplace_agent_id=record.marketplace_agent_id,
+            marketplace_agent_name=agent_name or "Unknown agent",
+            usage_type=record.usage_type,
+            quantity=record.quantity,
+            cost=float(record.cost),
+            created_at=record.created_at,
+        )
+        for record, agent_name in recent_usage_result.all()
+    ]
+
+    active_subscriptions_result = await db.execute(
+        select(func.count(AgentSubscription.id)).where(
+            AgentSubscription.team_id == team_id,
+            AgentSubscription.status == "active",
+        )
+    )
+    active_agent_subscriptions = int(active_subscriptions_result.scalar_one())
+
+    settings = team.settings or {}
+    subscription = BillingSubscriptionSnapshotResponse(
+        status=settings.get("subscription_status") or "unknown",
+        active_agent_subscriptions=active_agent_subscriptions,
+        stripe_subscription_id=settings.get("stripe_subscription_id"),
+        seat_count=settings.get("seat_count"),
+    )
+
+    return BillingSummaryResponse(
+        team_id=team_id,
+        subscription=subscription,
+        total_usage_cost=total_usage_cost,
+        usage_by_agent=usage_by_agent,
+        recent_usage=recent_usage,
+    )
+
+
+@billing_router.post("/subscribe", response_model=SubscriptionCreateResponse)
 async def create_subscription(
     req: SubscriptionCreateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> SubscriptionCreateResponse:
     """Create a checkout session for team seat subscription."""
     # Verify team ownership
     result = await db.execute(
@@ -47,18 +143,24 @@ async def create_subscription(
     stripe_service = get_stripe_service()
 
     # TODO: Replace with actual Stripe price ID from environment/config
-    PRICE_ID = "price_1dummy"
+    price_id = "price_1dummy"
 
     try:
-        url = stripe_service.create_checkout_session(
+        checkout_url = stripe_service.create_checkout_session(
             team_id=team.id,
-            price_id=PRICE_ID,
-            success_url=req.success_url,
-            cancel_url=req.cancel_url,
+            price_id=price_id,
+            success_url=str(req.success_url),
+            cancel_url=str(req.cancel_url),
         )
-        return {"checkout_url": url}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to create checkout session",
+        ) from exc
+
+    return SubscriptionCreateResponse(checkout_url=checkout_url, team_id=team.id)
 
 
 # ============== Marketplace Agent Purchase ==============

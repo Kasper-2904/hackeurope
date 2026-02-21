@@ -100,8 +100,22 @@
   - Agent creators can publish versions.
 
 ### M3-T4 Billing & Settings UI (owner: Marin)
-- Status: Todo
+- Status: In Progress
 - Description: Build the workspace settings page for Stripe checkout and Paid.ai cost visibility.
+- Notes: 2026-02-21 - Implementation prep completed with M3-T4-ST0 (branch + scoped subtask plan + agent prompt pack in `prompts/`).
+- Notes: 2026-02-21 - ST1-ST6 completed: backend billing summary endpoint with team ownership + usage aggregation, hardened subscribe response/error contract, frontend billing API/types, `/billing` page + nav integration, subscribe CTA flow with Stripe redirect, and usage visibility widgets with empty states.
+- Subtasks:
+  - M3-T4-ST0 (owner: Marin) - Done - Prepare branch, subtasks, and agent prompts.
+  - M3-T4-ST1 (owner: Farhan) - Done - Added `GET /api/v1/billing/summary/{team_id}` with strict owner-only access, subscription snapshot, total usage cost, per-agent rollup, and recent usage records.
+  - M3-T4-ST2 (owner: Farhan) - Done - Hardened `POST /billing/subscribe` with typed response payload (`checkout_url`, `team_id`), URL validation, and stable checkout failure errors for UI consumption.
+  - M3-T4-ST3 (owner: Martin) - Done - Added `frontend/src/lib/billingApi.ts` and shared billing TS types in `frontend/src/lib/types.ts`.
+  - M3-T4-ST4 (owner: Martin) - Done - Replaced `/billing` placeholder with `BillingPage` and added Billing nav entry in app shell.
+  - M3-T4-ST5 (owner: Martin) - Done - Implemented workspace selection + subscribe CTA flow with loading/error handling and Stripe checkout redirect.
+  - M3-T4-ST6 (owner: Martin) - Done - Implemented billing usage widgets for total cost, per-agent breakdown, and recent usage table with empty states.
+  - M3-T4-ST7 (owner: Marin) - Done - Added backend billing tests for summary empty-state/response-shape, non-owner/unknown-team authorization, and subscribe validation/service-failure paths.
+  - M3-T4-ST8 (owner: Marin) - Done - Added frontend BillingPage tests covering success rendering, subscribe redirect + error handling, and summary loading/error/empty states.
+  - M3-T4-ST9 (owner: Marin) - Todo - Review pass and quality gates (`cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`).
+  - Notes: 2026-02-21 - Test updates: `backend/tests/api/test_billing.py`, `frontend/src/pages/BillingPage.test.tsx`; commands run: `cd backend && .venv/bin/pytest`, `cd frontend && npm run lint && npm run build && npm run test`.
 - Acceptance Criteria:
   - User can click "Subscribe" to trigger Stripe flow.
   - Usage dashboards visualize costs.
