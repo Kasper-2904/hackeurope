@@ -203,9 +203,9 @@ describe("getMarketplaceAgent", () => {
     expect(agent!.id).toBe("mp-1");
   });
 
-  it("returns undefined for an unknown id", async () => {
+  it("returns null for an unknown id", async () => {
     const agent = await getMarketplaceAgent("nonexistent");
-    expect(agent).toBeUndefined();
+    expect(agent).toBeNull();
   });
 });
 
