@@ -47,6 +47,8 @@ class SubtaskStatus(str, Enum):
     APPROVED = "approved"
     FINALIZED = "finalized"
     REJECTED = "rejected"
+    FAILED = "failed"
+    DONE = "done"
 
 
 class PricingType(str, Enum):

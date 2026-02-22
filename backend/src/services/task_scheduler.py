@@ -70,11 +70,11 @@ class TaskScheduler:
 
     async def _process_pending_tasks(self):
         """
-        Find pending tasks with approved plans and dispatch them to the orchestrator.
+        Find pending/assigned/in_progress tasks with approved plans and dispatch them to the orchestrator.
         """
         logger.debug("Checking for pending tasks...")
         async with async_session_factory() as session:
-            # Find tasks that are PENDING and have an approved plan
+            # Find tasks that are PENDING, ASSIGNED, or IN_PROGRESS and have an approved plan
             approved_plan_task_ids = select(Plan.task_id).where(
                 Plan.status == PlanStatus.APPROVED.value
             )
@@ -82,14 +82,18 @@ class TaskScheduler:
             result = await session.execute(
                 select(Task)
                 .where(
-                    Task.status == TaskStatus.PENDING,
+                    Task.status.in_(
+                        [TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]
+                    ),
                     Task.id.in_(approved_plan_task_ids),
                 )
                 .limit(10)  # Process in batches
             )
             pending_tasks = list(result.scalars().all())
 
-            logger.info(f"Found {len(pending_tasks)} pending tasks with approved plans")
+            logger.info(
+                f"Found {len(pending_tasks)} pending/assigned/in_progress tasks with approved plans"
+            )
 
             if not pending_tasks:
                 return

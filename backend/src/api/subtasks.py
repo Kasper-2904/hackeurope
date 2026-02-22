@@ -168,8 +168,9 @@ async def _run_subtask_orchestration(
                 if orch_status == "failed":
                     subtask.status = SubtaskStatus.FAILED
                 elif orch_status in ("completed", "completed_with_errors"):
-                    subtask.status = SubtaskStatus.DONE
+                    subtask.status = SubtaskStatus.DRAFT_GENERATED
                     subtask.draft_content = result.get("final_result", "")
+                    subtask.draft_generated_at = datetime.utcnow()
                 await session.commit()
 
     except Exception as e:

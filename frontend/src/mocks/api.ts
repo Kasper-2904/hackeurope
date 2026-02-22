@@ -13,6 +13,7 @@ import type {
   RiskSignal,
   SubtaskDetail,
   Task,
+  TaskLogsResponse,
   TeamMember,
 } from "@/lib/types";
 
@@ -176,5 +177,21 @@ export async function getDeveloperDashboard(
     ),
     recent_risks: mockRiskSignals.filter((r) => !r.is_resolved),
     workload: 0.7,
+  };
+}
+
+// ---- Task Logs ----
+
+export async function getTaskLogs(
+  taskId: string,
+  _afterSequence?: number,
+  _limit?: number
+): Promise<TaskLogsResponse> {
+  await delay();
+  return {
+    task_id: taskId,
+    logs: [],
+    has_more: false,
+    last_sequence: 0,
   };
 }

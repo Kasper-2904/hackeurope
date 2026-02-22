@@ -27,6 +27,7 @@ vi.mock("@/lib/api", () => ({
   getTasks: vi.fn(),
   getTaskReasoningLogs: vi.fn(),
   subscribeTaskReasoningLogs: vi.fn(() => vi.fn()),
+  getTaskLogs: vi.fn().mockResolvedValue({ task_id: "", logs: [], has_more: false, last_sequence: 0 }),
 }));
 
 vi.mock("@/components/ui/tabs", () => ({

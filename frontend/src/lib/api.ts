@@ -299,6 +299,11 @@ export async function updateTaskProgress(
   return data
 }
 
+export async function cancelTask(taskId: string): Promise<Task> {
+  const { data } = await apiClient.post<Task>(`/tasks/${taskId}/cancel`)
+  return data
+}
+
 export interface TaskStartResponse {
   task_id: string
   status: string

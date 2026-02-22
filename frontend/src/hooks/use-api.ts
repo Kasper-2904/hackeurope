@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  cancelTask,
   getAgent,
   getAgents,
   getMarketplaceAgent,
@@ -230,6 +231,17 @@ export function usePublishAgent() {
   });
 }
 
+export function useCancelTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: cancelTask,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["task"] });
+    },
+  });
+}
+
 // Store for polling state - used with useSyncExternalStore
 const pollingStore = {
   _states: new Map<string, boolean>(),
@@ -381,7 +393,6 @@ export function useTaskLogs(
 
   const refresh = useCallback(() => {
     fetchLogsRef.current?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { logs, isPolling, refresh };

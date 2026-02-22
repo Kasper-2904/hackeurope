@@ -30,13 +30,15 @@ from src.api.schemas import (
 )
 from src.core.reasoning_logs import get_reasoning_stream_hub
 from src.core.event_bus import Event, EventType, get_event_bus
-from src.core.state import TaskStatus
+from src.core.state import PlanStatus, SubtaskStatus, TaskStatus
 from src.storage.database import get_db
 from src.storage.models import (
     Agent,
     MarketplaceAgent,
+    Plan,
     Project,
     ProjectAllowedAgent,
+    Subtask,
     Task,
     TaskLog,
     TaskReasoningLog,
@@ -597,6 +599,39 @@ async def update_task_progress(
     return task
 
 
+async def _create_subtasks_from_plan(session: AsyncSession, task_id: str, plan_id: str) -> list:
+    """Create subtasks from the approved plan."""
+    from uuid import uuid4
+
+    # Get the plan
+    plan_result = await session.execute(select(Plan).where(Plan.id == plan_id))
+    plan = plan_result.scalar_one_or_none()
+
+    if not plan or not plan.plan_data:
+        return []
+
+    subtask_data = plan.plan_data.get("subtasks", [])
+    if not subtask_data:
+        return []
+
+    created_subtasks = []
+    for idx, st_data in enumerate(subtask_data):
+        subtask = Subtask(
+            id=str(uuid4()),
+            task_id=task_id,
+            plan_id=plan_id,
+            title=st_data.get("title", f"Subtask {idx + 1}"),
+            description=st_data.get("description", ""),
+            priority=st_data.get("priority", idx + 1),
+            status=SubtaskStatus.PENDING.value,
+        )
+        session.add(subtask)
+        created_subtasks.append(subtask)
+
+    await session.commit()
+    return created_subtasks
+
+
 async def _run_task_orchestration(
     task_id: str,
     task_type: str,
@@ -608,9 +643,34 @@ async def _run_task_orchestration(
 ):
     """Background task to run the orchestrator for a task."""
     from src.core.orchestrator import get_orchestrator
+    from src.services.task_manager import get_task_manager
     from src.storage.database import AsyncSessionLocal
 
+    task_manager = get_task_manager()
+
     try:
+        # First, create subtasks from the approved plan
+        async with AsyncSessionLocal() as session:
+            # Get approved plan for this task
+            plan_result = await session.execute(
+                select(Plan).where(
+                    Plan.task_id == task_id, Plan.status == PlanStatus.APPROVED.value
+                )
+            )
+            plan = plan_result.scalar_one_or_none()
+
+            if plan:
+                # Check if subtasks already exist
+                subtask_check = await session.execute(
+                    select(Subtask).where(Subtask.task_id == task_id)
+                )
+                existing_subtasks = subtask_check.scalars().all()
+
+                if not existing_subtasks:
+                    # Create subtasks from plan
+                    await _create_subtasks_from_plan(session, task_id, plan.id)
+                    print(f"Created subtasks from plan {plan.id}")
+
         orchestrator = get_orchestrator()
         result = await orchestrator.execute_task(
             task_id=task_id,
@@ -622,22 +682,35 @@ async def _run_task_orchestration(
             project_id=project_id,
         )
 
-        # Update task status based on orchestrator result
-        async with AsyncSessionLocal() as session:
-            task_result = await session.execute(select(Task).where(Task.id == task_id))
-            task = task_result.scalar_one_or_none()
-            if task:
-                orch_status = result.get("status", "")
-                if orch_status == "failed":
-                    task.status = TaskStatus.FAILED
-                    task.error = result.get("error")
-                elif orch_status in ("completed", "completed_with_errors"):
-                    task.status = TaskStatus.COMPLETED
-                    task.progress = 1.0
-                    task.result = result
-                task.completed_at = datetime.utcnow()
-                await session.commit()
+        # Check if cancelled before updating
+        if task_manager.is_running(task_id):
+            # Update task status based on orchestrator result
+            async with AsyncSessionLocal() as session:
+                task_result = await session.execute(select(Task).where(Task.id == task_id))
+                task = task_result.scalar_one_or_none()
+                if task:
+                    orch_status = result.get("status", "")
+                    steps = result.get("steps", [])
+                    total_steps = len(steps)
 
+                    # Calculate progress based on completed steps
+                    if total_steps > 0:
+                        completed_steps = sum(1 for s in steps if s.get("result"))
+                        task.progress = completed_steps / total_steps
+
+                    if orch_status == "failed":
+                        task.status = TaskStatus.FAILED
+                        task.error = result.get("error")
+                    elif orch_status in ("completed", "completed_with_errors"):
+                        task.status = TaskStatus.COMPLETED
+                        task.progress = 1.0
+                        task.result = result
+                    task.completed_at = datetime.utcnow()
+                    await session.commit()
+
+    except asyncio.CancelledError:
+        print(f"Task {task_id} was cancelled")
+        raise
     except Exception as e:
         print(f"Error in background orchestration for task {task_id}: {e}")
         # Update task status to FAILED
@@ -723,16 +796,20 @@ async def start_task(
         )
     )
 
-    # Trigger orchestrator execution in background
-    background_tasks.add_task(
-        _run_task_orchestration,
-        task_id=task.id,
-        task_type=task.task_type,
-        description=task.description or task.title,
-        input_data=task.input_data,
-        team_id=task.team_id,
-        user_id=current_user.id,
-        project_id=request.project_id,
+    # Trigger orchestrator execution using task manager
+    from src.services.task_manager import get_task_manager
+
+    task_manager = get_task_manager()
+    asyncio.create_task(
+        _run_task_orchestration(
+            task_id=task.id,
+            task_type=task.task_type,
+            description=task.description or task.title,
+            input_data=task.input_data,
+            team_id=task.team_id,
+            user_id=current_user.id,
+            project_id=request.project_id,
+        )
     )
 
     return {
@@ -745,6 +822,43 @@ async def start_task(
         },
         "error": None,
     }
+
+
+@tasks_router.post("/{task_id}/cancel", response_model=TaskResponse)
+async def cancel_task(
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Task:
+    """Cancel a running task."""
+    from src.services.task_manager import get_task_manager
+
+    task_manager = get_task_manager()
+
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task cannot be cancelled from status {task.status.value}",
+        )
+
+    # Cancel the background task if running
+    cancelled = task_manager.cancel(task_id)
+    if cancelled:
+        print(f"Cancelled running task {task_id}")
+
+    # Update task status to CANCELLED
+    task.status = TaskStatus.CANCELLED
+    task.error = "Cancelled by user"
+    await db.commit()
+    await db.refresh(task)
+
+    return task
 
 
 @tasks_router.post("/{task_id}/execute", response_model=TaskStartResponse)
