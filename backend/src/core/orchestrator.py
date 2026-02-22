@@ -236,8 +236,9 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
                 "status": "failed",
             }
 
-        # Prepare skill inputs
-        skill_inputs = _prepare_skill_inputs(skill_name, input_data)
+        # Prepare skill inputs — merge task_description into input_data
+        enriched_input = {**input_data, "description": state.get("task_description", "")}
+        skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
 
         # Execute skill via inference service
         result_text = await inference_service.execute_skill(
@@ -331,29 +332,34 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
 
 def _prepare_skill_inputs(skill_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
     """Prepare inputs for a skill based on the skill name and input data."""
+    description = input_data.get("description", "")
+
     if skill_name == "generate_code":
         return {
-            "task": input_data.get("description", ""),
+            "task": description,
             "language": input_data.get("language", "python"),
         }
 
     if skill_name == "review_code":
         return {
             "code": input_data.get("code", ""),
+            "task": description,
         }
 
     if skill_name == "debug_code":
         return {
             "code": input_data.get("code", ""),
             "error": input_data.get("error", ""),
+            "task": description,
         }
 
     if skill_name == "refactor_code":
         return {
             "code": input_data.get("code", ""),
-            "instructions": input_data.get("instructions", ""),
+            "instructions": input_data.get("instructions", "") or description,
         }
 
+    # Default: pass everything including description
     return input_data
 
 

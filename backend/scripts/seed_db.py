@@ -7,9 +7,9 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from src.config import get_settings
-from sqlalchemy import select
 from src.storage.models import (
     Base,
     User,
@@ -56,12 +56,21 @@ async def seed_database():
     async_session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session() as session:
-        # Idempotency check
+        # Idempotency check — if already seeded, just refresh API keys
         existing = await session.execute(
             select(User).where(User.email == "admin@unifai.com")
         )
         if existing.scalar_one_or_none():
-            print("Database already seeded. Skipping.")
+            if settings.anthropic_api_key:
+                await session.execute(
+                    update(Agent)
+                    .where(Agent.inference_provider == "anthropic")
+                    .values(inference_api_key_encrypted=settings.anthropic_api_key)
+                )
+                await session.commit()
+                print("Database already seeded. Refreshed agent API keys from .env.")
+            else:
+                print("Database already seeded. Skipping.")
             return
 
         print("=" * 50)
