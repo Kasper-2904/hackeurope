@@ -56,7 +56,7 @@ async def seed_database():
     async_session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session() as session:
-        # Idempotency check — if already seeded, just refresh API keys
+        # Idempotency check — if already seeded, just refresh API keys + context files
         existing = await session.execute(select(User).where(User.email == "admin@unifai.com"))
         if existing.scalar_one_or_none():
             if settings.anthropic_api_key:
@@ -68,7 +68,16 @@ async def seed_database():
                 await session.commit()
                 print("Database already seeded. Refreshed agent API keys from .env.")
             else:
-                print("Database already seeded. Skipping.")
+                print("Database already seeded. Skipping API key refresh.")
+
+            # Always refresh shared context files from current DB state
+            proj_result = await session.execute(select(Project).limit(1))
+            project = proj_result.scalar_one_or_none()
+            if project:
+                from src.services.context_service import SharedContextService
+                context_service = SharedContextService()
+                refreshed = await context_service.refresh_context_files(project.id, session)
+                print(f"Refreshed {len(refreshed)} shared context files from DB.")
             return
 
         print("=" * 50)

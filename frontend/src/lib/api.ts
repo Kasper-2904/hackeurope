@@ -341,3 +341,40 @@ export async function getDeveloperDashboard(userId: string): Promise<DeveloperDa
   const { data } = await apiClient.get<DeveloperDashboard>(`/dashboard/developer/${userId}`)
   return data
 }
+
+// ---- Shared Context Files ----
+
+export interface SharedContextFileInfo {
+  filename: string
+  size_bytes: number
+  updated_at: string
+}
+
+export interface SharedContextFileDetail {
+  filename: string
+  content: string
+  updated_at: string
+}
+
+export async function getSharedContextFiles(): Promise<SharedContextFileInfo[]> {
+  const { data } = await apiClient.get<SharedContextFileInfo[]>('/shared-context/files')
+  return data
+}
+
+export async function getSharedContextFile(filename: string): Promise<SharedContextFileDetail> {
+  const { data } = await apiClient.get<SharedContextFileDetail>(
+    `/shared-context/files/${encodeURIComponent(filename)}`,
+  )
+  return data
+}
+
+export async function updateSharedContextFile(
+  filename: string,
+  content: string,
+): Promise<SharedContextFileDetail> {
+  const { data } = await apiClient.put<SharedContextFileDetail>(
+    `/shared-context/files/${encodeURIComponent(filename)}`,
+    { content },
+  )
+  return data
+}

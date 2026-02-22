@@ -17,6 +17,7 @@ from src.api.dashboards import dashboard_router
 from src.api.github import github_router
 from src.api.marketplace import marketplace_router
 from src.api.billing import billing_router
+from src.api.shared_context import shared_context_router
 
 from src.config import get_settings
 from src.core.event_bus import get_event_bus
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(github_router, prefix="/api/v1")
     app.include_router(marketplace_router, prefix="/api/v1")
     app.include_router(billing_router, prefix="/api/v1")
+    app.include_router(shared_context_router, prefix="/api/v1")
 
     return app
 

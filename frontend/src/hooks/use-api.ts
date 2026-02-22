@@ -18,6 +18,7 @@ import {
   getTaskReasoningLogs,
   getReviewerFindings,
   getRiskSignals,
+  getSharedContextFiles,
   getSubtasks,
   getTask,
   getTaskLogs,
@@ -245,6 +246,13 @@ export function useCancelTask() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task"] });
     },
+  });
+}
+
+export function useSharedContextFiles() {
+  return useQuery({
+    queryKey: ["shared-context-files"],
+    queryFn: getSharedContextFiles,
   });
 }
 
