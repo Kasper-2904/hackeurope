@@ -273,8 +273,8 @@ class TestListPublicAgents:
 
         assert len(coder_agents) == 2
         assert len(reviewer_agents) == 1
-        assert all(a["category"] == "coder" for a in coder_agents)
-        assert reviewer_agents[0]["category"] == "reviewer"
+        assert all(a.category == "coder" for a in coder_agents)
+        assert reviewer_agents[0].category == "reviewer"
 
     @pytest.mark.asyncio
     async def test_list_agents_excludes_inactive(self, db_session: AsyncSession, mock_user):
@@ -307,7 +307,7 @@ class TestListPublicAgents:
         agents = await MarketplaceService.list_public_agents(db_session)
 
         assert len(agents) == 1
-        assert agents[0]["name"] == "Active Agent"
+        assert agents[0].name == "Active Agent"
 
 
 # ============== Get Marketplace Agent Tests ==============
@@ -335,10 +335,10 @@ class TestGetMarketplaceAgent:
         retrieved = await MarketplaceService.get_marketplace_agent(db_session, created.id)
 
         assert retrieved is not None
-        assert retrieved["id"] == created.id
-        assert retrieved["name"] == "Specific Agent"
-        assert retrieved["description"] == "A specific agent for testing"
-        assert retrieved["agent"] is not None
+        assert retrieved.id == created.id
+        assert retrieved.name == "Specific Agent"
+        assert retrieved.description == "A specific agent for testing"
+        assert retrieved.agent is not None
 
     @pytest.mark.asyncio
     async def test_get_marketplace_agent_not_found(self, db_session: AsyncSession):

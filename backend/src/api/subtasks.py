@@ -146,18 +146,41 @@ async def _run_subtask_orchestration(
     subtask_id: str, task_id: str, title: str, description: str, current_user_id: str
 ):
     """Background task to run the orchestrator for a specific subtask."""
+    from src.storage.database import AsyncSessionLocal
+    from sqlalchemy import select
+
     try:
         orchestrator = get_orchestrator()
-        await orchestrator.execute_task(
+        result = await orchestrator.execute_task(
             task_id=task_id,
             subtask_id=subtask_id,
             task_type="subtask_execution",
             description=f"{title}\n{description}",
             user_id=current_user_id,
         )
+
+        # Update subtask status based on orchestrator result
+        async with AsyncSessionLocal() as session:
+            subtask_result = await session.execute(select(Subtask).where(Subtask.id == subtask_id))
+            subtask = subtask_result.scalar_one_or_none()
+            if subtask:
+                orch_status = result.get("status", "")
+                if orch_status == "failed":
+                    subtask.status = SubtaskStatus.FAILED
+                elif orch_status in ("completed", "completed_with_errors"):
+                    subtask.status = SubtaskStatus.DONE
+                    subtask.draft_content = result.get("final_result", "")
+                await session.commit()
+
     except Exception as e:
         print(f"Error in background orchestration for subtask {subtask_id}: {e}")
-        # Ideally, we would update the subtask status to ERROR here using a new db session
+        # Update subtask status to FAILED
+        async with AsyncSessionLocal() as session:
+            subtask_result = await session.execute(select(Subtask).where(Subtask.id == subtask_id))
+            subtask = subtask_result.scalar_one_or_none()
+            if subtask:
+                subtask.status = SubtaskStatus.FAILED
+                await session.commit()
 
 
 @subtasks_router.post("/{subtask_id}/dispatch", response_model=SubtaskResponse)

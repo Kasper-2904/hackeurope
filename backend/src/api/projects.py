@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -597,10 +597,65 @@ async def update_task_progress(
     return task
 
 
+async def _run_task_orchestration(
+    task_id: str,
+    task_type: str,
+    description: str,
+    input_data: dict[str, Any] | None,
+    team_id: str | None,
+    user_id: str,
+    project_id: str,
+):
+    """Background task to run the orchestrator for a task."""
+    from src.core.orchestrator import get_orchestrator
+    from src.storage.database import AsyncSessionLocal
+
+    try:
+        orchestrator = get_orchestrator()
+        result = await orchestrator.execute_task(
+            task_id=task_id,
+            task_type=task_type,
+            description=description,
+            input_data=input_data,
+            team_id=team_id,
+            user_id=user_id,
+            project_id=project_id,
+        )
+
+        # Update task status based on orchestrator result
+        async with AsyncSessionLocal() as session:
+            task_result = await session.execute(select(Task).where(Task.id == task_id))
+            task = task_result.scalar_one_or_none()
+            if task:
+                orch_status = result.get("status", "")
+                if orch_status == "failed":
+                    task.status = TaskStatus.FAILED
+                    task.error = result.get("error")
+                elif orch_status in ("completed", "completed_with_errors"):
+                    task.status = TaskStatus.COMPLETED
+                    task.progress = 1.0
+                    task.result = result
+                task.completed_at = datetime.utcnow()
+                await session.commit()
+
+    except Exception as e:
+        print(f"Error in background orchestration for task {task_id}: {e}")
+        # Update task status to FAILED
+        async with AsyncSessionLocal() as session:
+            task_result = await session.execute(select(Task).where(Task.id == task_id))
+            task = task_result.scalar_one_or_none()
+            if task:
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
+                task.completed_at = datetime.utcnow()
+                await session.commit()
+
+
 @tasks_router.post("/{task_id}/start", response_model=TaskStartResponse)
 async def start_task(
     task_id: str,
     request: TaskStartRequest,
+    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
@@ -612,9 +667,10 @@ async def start_task(
     2. Selects an appropriate agent from the project's allowlist
     3. Assigns the agent to the task
     4. Sets task status to IN_PROGRESS with initial progress
-    5. Returns immediately (does NOT wait for task completion)
+    5. Triggers orchestrator execution in background
+    6. Returns immediately (does NOT wait for task completion)
 
-    The actual work execution happens asynchronously or when the agent polls for work.
+    The actual work execution happens asynchronously via background task.
     """
     from src.services.agent_assignment import assign_agent_to_task
 
@@ -665,6 +721,18 @@ async def start_task(
             },
             source="api",
         )
+    )
+
+    # Trigger orchestrator execution in background
+    background_tasks.add_task(
+        _run_task_orchestration,
+        task_id=task.id,
+        task_type=task.task_type,
+        description=task.description or task.title,
+        input_data=task.input_data,
+        team_id=task.team_id,
+        user_id=current_user.id,
+        project_id=request.project_id,
     )
 
     return {

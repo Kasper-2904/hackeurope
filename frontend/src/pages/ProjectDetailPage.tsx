@@ -147,7 +147,6 @@ export default function ProjectDetailPage() {
     mutationFn: (agentId: string) => addMarketplaceAgentToProject(projectId, agentId),
     onSuccess: () => {
       setActionMessage('Marketplace agent added to project allowlist.')
-      setSelectedMarketplaceAgentId('')
       void queryClient.invalidateQueries({ queryKey: ['pm-dashboard', projectId] })
       void queryClient.invalidateQueries({ queryKey: ['marketplace-catalog', marketplaceCategory] })
     },

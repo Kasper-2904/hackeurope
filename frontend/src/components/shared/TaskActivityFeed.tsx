@@ -134,7 +134,7 @@ export function TaskActivityFeed({ logs, isPolling, maxHeight = '400px' }: TaskA
                     <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words">
                       {log.message}
                     </p>
-                    {log.details && log.log_type === 'agent_output' && log.details.full_output && (
+                    {log.details && log.log_type === 'agent_output' && 'full_output' in log.details && log.details.full_output != null && (
                       <details className="mt-2">
                         <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">
                           View full output

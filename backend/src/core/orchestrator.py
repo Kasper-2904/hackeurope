@@ -639,10 +639,15 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
 
     final_result = "\n\n".join(final_parts) if final_parts else "No results generated."
 
-    # Check if any step failed
-    has_errors = any(r.get("error") for r in step_results)
-
-    status = "completed" if not has_errors else "completed_with_errors"
+    # Preserve failed status if already set, otherwise check for errors
+    existing_status = state.get("status", "")
+    if existing_status == "failed":
+        status = "failed"
+        final_result = state.get("error", "Task failed")
+    else:
+        # Check if any step failed
+        has_errors = any(r.get("error") for r in step_results)
+        status = "completed" if not has_errors else "completed_with_errors"
 
     await event_bus.publish(
         Event(

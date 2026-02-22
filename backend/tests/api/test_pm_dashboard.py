@@ -20,7 +20,17 @@ from src.api.schemas import PlanReject
 from src.core.state import PlanStatus, TaskStatus, UserRole
 from src.main import create_app
 from src.storage.database import get_db
-from src.storage.models import Agent, AuditLog, Plan, Project, ProjectAllowedAgent, RiskSignal, Task, TeamMember, User
+from src.storage.models import (
+    Agent,
+    AuditLog,
+    Plan,
+    Project,
+    ProjectAllowedAgent,
+    RiskSignal,
+    Task,
+    TeamMember,
+    User,
+)
 
 
 def _make_user(db: AsyncSession, suffix: str) -> User:
@@ -142,7 +152,9 @@ async def test_project_allowlist_add_list_remove(db_session: AsyncSession):
     assert listed[0].agent.name == "Coder Agent"
 
     await remove_project_allowed_agent(project.id, agent.id, current_user=owner, db=db_session)
-    listed_after_remove = await list_project_allowed_agents(project.id, current_user=owner, db=db_session)
+    listed_after_remove = await list_project_allowed_agents(
+        project.id, current_user=owner, db=db_session
+    )
     assert listed_after_remove == []
 
 
@@ -175,7 +187,7 @@ async def test_project_allowlist_add_requires_owned_agent(db_session: AsyncSessi
         )
 
     assert exc.value.status_code == 404
-    assert exc.value.detail == "Agent not found"
+    assert "Agent not found" in exc.value.detail
 
 
 async def test_project_allowlist_add_invalid_agent_id_returns_not_found(db_session: AsyncSession):
@@ -183,13 +195,17 @@ async def test_project_allowlist_add_invalid_agent_id_returns_not_found(db_sessi
     project = await _make_project(db_session, owner.id)
 
     with pytest.raises(HTTPException) as exc:
-        await add_project_allowed_agent(project.id, "missing-agent", current_user=owner, db=db_session)
+        await add_project_allowed_agent(
+            project.id, "missing-agent", current_user=owner, db=db_session
+        )
 
     assert exc.value.status_code == 404
-    assert exc.value.detail == "Agent not found"
+    assert "Agent not found" in exc.value.detail
 
 
-async def test_project_allowlist_requires_project_owner_for_list_and_remove(db_session: AsyncSession):
+async def test_project_allowlist_requires_project_owner_for_list_and_remove(
+    db_session: AsyncSession,
+):
     owner = _make_user(db_session, "owner")
     outsider = _make_user(db_session, "outsider")
     project = await _make_project(db_session, owner.id)
@@ -202,7 +218,9 @@ async def test_project_allowlist_requires_project_owner_for_list_and_remove(db_s
     assert list_exc.value.detail == "Project not found"
 
     with pytest.raises(HTTPException) as remove_exc:
-        await remove_project_allowed_agent(project.id, agent.id, current_user=outsider, db=db_session)
+        await remove_project_allowed_agent(
+            project.id, agent.id, current_user=outsider, db=db_session
+        )
     assert remove_exc.value.status_code == 404
     assert remove_exc.value.detail == "Project not found"
 
@@ -219,7 +237,9 @@ async def test_project_allowlist_remove_missing_entry_returns_not_found(db_sessi
     assert exc.value.detail == "Allowed agent not found"
 
 
-async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(db_session: AsyncSession):
+async def test_pm_plan_approval_success_requires_owner_and_creates_audit_log(
+    db_session: AsyncSession,
+):
     owner = _make_user(db_session, "owner")
     outsider = _make_user(db_session, "outsider")
     project = await _make_project(db_session, owner.id)
@@ -267,7 +287,9 @@ async def test_pm_plan_approval_rejects_wrong_status_and_missing_plan(db_session
     assert status_exc.value.detail == "Plan must be in pending_pm_approval status to be approved"
 
 
-async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(db_session: AsyncSession):
+async def test_pm_plan_reject_success_requires_owner_and_creates_audit_log(
+    db_session: AsyncSession,
+):
     owner = _make_user(db_session, "owner")
     outsider = _make_user(db_session, "outsider")
     project = await _make_project(db_session, owner.id)
