@@ -3,57 +3,29 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ContextExplorerPage from "./ContextExplorerPage";
-import { getPlans, getRiskSignals, getReviewerFindings } from "@/lib/api";
-import type { Plan, RiskSignal } from "@/lib/types";
+import { getSharedContextFiles } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
-  getPlans: vi.fn(),
-  getRiskSignals: vi.fn(),
-  getReviewerFindings: vi.fn(),
+  getSharedContextFiles: vi.fn(),
+  getSharedContextFile: vi.fn(),
+  updateSharedContextFile: vi.fn(),
+  toApiErrorMessage: vi.fn((err: unknown, fallback: string) => fallback),
 }));
 
-const mockPlans: Plan[] = [
-  {
-    id: "plan-1",
-    task_id: "task-2",
-    project_id: "proj-1",
-    status: "approved",
-    plan_data: {
-      summary: "Build GitHub ingestion in 3 subtasks",
-      selected_agent: "CodeDrafter",
-      selected_agent_reason: "Has code_generation capability and is online.",
-      suggested_assignee: "Kasper",
-      suggested_assignee_reason: "Has Python skills, at 50% capacity.",
-      alternatives_considered: [
-        { agent: "Refactorer", reason: "Specializes in refactoring, not new code." },
-      ],
-    },
-    approved_by_id: "user-2",
-    approved_at: "2025-06-12T07:30:00Z",
-    rejection_reason: null,
-    version: 1,
-    created_at: "2025-06-11T16:00:00Z",
-    updated_at: null,
-  },
-];
+vi.mock("@/lib/apiClient", () => ({
+  toApiErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
+}));
 
-const mockRisks: RiskSignal[] = [
+const mockFiles = [
   {
-    id: "risk-1",
-    project_id: "proj-1",
-    task_id: "task-2",
-    subtask_id: "sub-2",
-    source: "reviewer",
-    severity: "medium",
-    title: "Schema mismatch in PR normalization",
-    description: "Missing reviewers field.",
-    rationale: "Reviewer detected missing field in TASK_GRAPH.md.",
-    recommended_action: "Add reviewers field to normalize_pr.",
-    is_resolved: false,
-    resolved_at: null,
-    resolved_by_id: null,
-    created_at: "2025-06-14T12:00:00Z",
-    updated_at: null,
+    filename: "PROJECT_STATE.md",
+    size_bytes: 2048,
+    updated_at: "2025-06-14T12:00:00Z",
+  },
+  {
+    filename: "INTEGRATIONS_GITHUB.md",
+    size_bytes: 1024,
+    updated_at: "2025-06-14T11:00:00Z",
   },
 ];
 
@@ -71,49 +43,43 @@ function renderWithProviders() {
 }
 
 describe("ContextExplorerPage", () => {
-  const mockedGetPlans = vi.mocked(getPlans);
-  const mockedGetRiskSignals = vi.mocked(getRiskSignals);
-  const mockedGetReviewerFindings = vi.mocked(getReviewerFindings);
+  const mockedGetFiles = vi.mocked(getSharedContextFiles);
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedGetPlans.mockResolvedValue(mockPlans);
-    mockedGetRiskSignals.mockResolvedValue(mockRisks);
-    mockedGetReviewerFindings.mockResolvedValue(mockRisks);
+    mockedGetFiles.mockResolvedValue(mockFiles);
   });
 
   it("shows loading state initially", () => {
-    mockedGetPlans.mockImplementation(() => new Promise(() => {}));
-    mockedGetRiskSignals.mockImplementation(() => new Promise(() => {}));
+    mockedGetFiles.mockImplementation(() => new Promise(() => {}));
     renderWithProviders();
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(
+      screen.getByText("Loading shared context files...")
+    ).toBeInTheDocument();
   });
 
   it("renders the page heading", async () => {
     renderWithProviders();
     await waitFor(() => {
-      expect(screen.getByText("Context Explorer")).toBeInTheDocument();
+      expect(screen.getByText("Shared Context")).toBeInTheDocument();
     });
   });
 
-  it("renders OA Decisions tab", async () => {
+  it("renders file cards", async () => {
     renderWithProviders();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /OA Decisions/ })).toBeInTheDocument();
+      expect(screen.getByText("PROJECT_STATE.md")).toBeInTheDocument();
+      expect(screen.getByText("INTEGRATIONS_GITHUB.md")).toBeInTheDocument();
     });
   });
 
-  it("renders Reviewer Findings tab", async () => {
+  it("shows empty state when no files", async () => {
+    mockedGetFiles.mockResolvedValue([]);
     renderWithProviders();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /Reviewer Findings/ })).toBeInTheDocument();
-    });
-  });
-
-  it("shows plan summaries in OA Decisions tab", async () => {
-    renderWithProviders();
-    await waitFor(() => {
-      expect(screen.getByText(/Build GitHub ingestion/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/No shared context files found/)
+      ).toBeInTheDocument();
     });
   });
 });
