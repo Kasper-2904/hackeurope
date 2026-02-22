@@ -1,12 +1,16 @@
-// ContextExplorerPage — view and edit shared context files
+// ContextExplorerPage — view, edit, and upload shared context files
 // that the orchestrator uses as its "memory" between agent runs.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useSharedContextFiles } from "@/hooks/use-api";
-import { getSharedContextFile, updateSharedContextFile } from "@/lib/api";
+import {
+  getSharedContextFile,
+  updateSharedContextFile,
+  createSharedContextFile,
+} from "@/lib/api";
 import type { SharedContextFileDetail } from "@/lib/api";
 import { toApiErrorMessage } from "@/lib/apiClient";
 
@@ -19,6 +23,12 @@ export default function ContextExplorerPage() {
   const [editContent, setEditContent] = useState("");
   const queryClient = useQueryClient();
 
+  // Upload / create new file state
+  const [showCreate, setShowCreate] = useState(false);
+  const [newFilename, setNewFilename] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const saveMutation = useMutation({
     mutationFn: () => {
       if (!selectedFile) return Promise.reject(new Error("No file selected"));
@@ -27,6 +37,20 @@ export default function ContextExplorerPage() {
     onSuccess: (updated) => {
       setSelectedFile(updated);
       setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ["shared-context-files"] });
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => {
+      const filename = newFilename.endsWith(".md") ? newFilename : `${newFilename}.md`;
+      return createSharedContextFile(filename, newContent);
+    },
+    onSuccess: (created) => {
+      setShowCreate(false);
+      setNewFilename("");
+      setNewContent("");
+      setSelectedFile(created);
       void queryClient.invalidateQueries({ queryKey: ["shared-context-files"] });
     },
   });
@@ -65,6 +89,27 @@ export default function ContextExplorerPage() {
     saveMutation.reset();
   }
 
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      setNewContent(content);
+      // Use uploaded filename, ensure .md extension
+      const name = file.name.endsWith(".md")
+        ? file.name
+        : file.name.replace(/\.[^.]+$/, ".md");
+      setNewFilename(name);
+      setShowCreate(true);
+    };
+    reader.readAsText(file);
+
+    // Reset input so the same file can be re-selected
+    e.target.value = "";
+  }
+
   if (isLoading) {
     return <div className="text-sm text-slate-500">Loading shared context files...</div>;
   }
@@ -79,16 +124,109 @@ export default function ContextExplorerPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">Shared Context</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Files the orchestrator reads before planning and updates after execution.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold">Shared Context</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Files the orchestrator reads before planning and updates after execution.
+            Upload your own context to give agents more project knowledge.
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md,.txt,.markdown"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload File
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              setShowCreate(true);
+              setNewFilename("");
+              setNewContent("");
+              createMutation.reset();
+            }}
+          >
+            + New Context
+          </Button>
+        </div>
       </div>
+
+      {/* Create / Upload new file form */}
+      {showCreate && (
+        <Card className="border-sky-300 bg-sky-50/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Add New Context File
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {createMutation.isError && (
+              <div className="text-sm text-red-600">
+                {toApiErrorMessage(createMutation.error, "Failed to create file")}
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Filename (must end in .md)
+              </label>
+              <input
+                type="text"
+                value={newFilename}
+                onChange={(e) => setNewFilename(e.target.value)}
+                placeholder="e.g. ARCHITECTURE_DECISIONS.md"
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                disabled={createMutation.isPending}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Content
+              </label>
+              <textarea
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                placeholder="# My Context File&#10;&#10;Add project knowledge that agents should know about..."
+                className="w-full min-h-[200px] rounded-md border border-slate-300 bg-white p-3 font-mono text-sm leading-relaxed focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                disabled={createMutation.isPending}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowCreate(false);
+                  createMutation.reset();
+                }}
+                disabled={createMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => createMutation.mutate()}
+                disabled={createMutation.isPending || !newFilename.trim() || !newContent.trim()}
+              >
+                {createMutation.isPending ? "Creating..." : "Create File"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {!files || files.length === 0 ? (
         <div className="rounded-md border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">
-          No shared context files found. Run the seed script or trigger a GitHub sync to populate them.
+          No shared context files found. Upload a file or create one to get started.
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

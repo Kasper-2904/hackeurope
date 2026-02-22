@@ -378,3 +378,14 @@ export async function updateSharedContextFile(
   )
   return data
 }
+
+export async function createSharedContextFile(
+  filename: string,
+  content: string,
+): Promise<SharedContextFileDetail> {
+  const { data } = await apiClient.post<SharedContextFileDetail>(
+    '/shared-context/files',
+    { filename, content },
+  )
+  return data
+}

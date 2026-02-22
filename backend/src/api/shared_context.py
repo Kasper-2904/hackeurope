@@ -84,6 +84,36 @@ async def get_context_file(
     }
 
 
+class ContextFileCreate(BaseModel):
+    filename: str
+    content: str
+
+
+@shared_context_router.post("/files", response_model=ContextFileDetail, status_code=status.HTTP_201_CREATED)
+async def create_context_file(
+    body: ContextFileCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Create a new shared context file. Filename must end in .md."""
+    _validate_filename(body.filename)
+
+    path = _service._dir / body.filename
+    if path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"File '{body.filename}' already exists. Use PUT to update it.",
+        )
+
+    _service._write_file(body.filename, body.content)
+
+    stat = path.stat()
+    return {
+        "filename": body.filename,
+        "content": body.content,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+
 @shared_context_router.put("/files/{filename}", response_model=ContextFileDetail)
 async def update_context_file(
     filename: str,
