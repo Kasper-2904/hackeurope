@@ -1,8 +1,16 @@
 # Project Overview
 
 ## Project Name
+Test Project
+
 ## Description
+_No description._
+
 ## Goals
-## Scope (MVP)
+_No goals defined._
+
 ## Milestones
-## Timeline
+_No milestones defined._
+
+## Repository
+Kasper-2904/hackeurope

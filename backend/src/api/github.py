@@ -1,5 +1,6 @@
 """API routes for GitHub ingestion."""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,6 +15,8 @@ from src.core.event_bus import Event, EventType, get_event_bus
 from src.services.github_service import GitHubService, HttpxGitHubProvider
 from src.storage.database import get_db
 from src.storage.models import Project, User
+
+logger = logging.getLogger(__name__)
 
 github_router = APIRouter(prefix="/projects", tags=["GitHub"])
 
