@@ -10,10 +10,12 @@ The orchestrator:
 """
 
 import json
+import logging
 import litellm
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
 from sqlalchemy import select
@@ -24,7 +26,8 @@ from src.core.event_bus import Event, EventType, get_event_bus
 from src.core.state import AgentStatus, TaskStatus
 from src.services.agent_inference import get_inference_service
 from src.storage.database import AsyncSessionLocal as async_session_factory
-from src.storage.models import Agent
+from src.core.state import PlanStatus
+from src.storage.models import Agent, Plan, TeamMember
 
 
 class OrchestratorState(TypedDict, total=False):
@@ -47,6 +50,7 @@ class OrchestratorState(TypedDict, total=False):
 
     # Results
     step_results: list[dict[str, Any]]
+    agent_selection_log: list[dict[str, Any]]
     final_result: str | None
     error: str | None
 
@@ -143,6 +147,7 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
 
     plan = state.get("plan", [])
     current_step = state.get("current_step", 0)
+    selection_log = list(state.get("agent_selection_log", []))
 
     if current_step >= len(plan):
         return {**state, "selected_agent_id": None}
@@ -164,10 +169,24 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
 
         if agents_with_skill:
             selected = agents_with_skill[0]
+            reason = f"Agent '{selected.name}' has the required skill '{required_skill}'."
         elif agents:
             selected = agents[0]
+            reason = f"No agent matched skill '{required_skill}'; falling back to '{selected.name}'."
         else:
             selected = None
+            reason = f"No online agents available for skill '{required_skill}'."
+
+    # Log the selection decision
+    log_entry = {
+        "step": current_step,
+        "required_skill": required_skill,
+        "candidates": [{"id": a.id, "name": a.name, "skills": a.skills or []} for a in agents],
+        "skill_matches": [{"id": a.id, "name": a.name} for a in agents_with_skill],
+        "selected": {"id": selected.id, "name": selected.name} if selected else None,
+        "reason": reason,
+    }
+    selection_log.append(log_entry)
 
     if not selected:
         await event_bus.publish(
@@ -183,6 +202,7 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
         return {
             **state,
             "selected_agent_id": None,
+            "agent_selection_log": selection_log,
             "error": f"No agents available for skill: {required_skill}",
             "status": "failed",
         }
@@ -193,7 +213,9 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
             data={
                 "task_id": state.get("task_id"),
                 "agent_id": selected.id,
+                "agent_name": selected.name,
                 "skill": required_skill,
+                "reason": reason,
             },
             source="orchestrator",
             target=selected.id,
@@ -204,6 +226,7 @@ async def select_agent(state: OrchestratorState) -> OrchestratorState:
         **state,
         "selected_agent_id": selected.id,
         "skill_name": required_skill,
+        "agent_selection_log": selection_log,
         "status": "executing",
     }
 
@@ -443,6 +466,7 @@ class Orchestrator:
             "skill_name": None,
             "skill_inputs": {},
             "step_results": [],
+            "agent_selection_log": [],
             "final_result": None,
             "error": None,
             "status": "pending",
@@ -460,6 +484,142 @@ class Orchestrator:
             "error": final_state.get("error"),
             "steps": final_state.get("step_results"),
             "plan": final_state.get("plan"),
+            "agent_selection_log": final_state.get("agent_selection_log", []),
+        }
+
+
+    async def generate_plan(
+        self,
+        task_id: str,
+        task_title: str,
+        task_description: str,
+        project_id: str,
+        db: AsyncSession,
+    ) -> dict[str, Any]:
+        """Generate a plan with OA reasoning and persist it to the database."""
+        logger = logging.getLogger(__name__)
+        settings = get_settings()
+
+        # Query available agents to provide real context to the LLM
+        result = await db.execute(
+            select(Agent).where(Agent.status == AgentStatus.ONLINE)
+        )
+        agents = list(result.scalars().all())
+
+        agent_descriptions = "\n".join(
+            f"- {a.name} (role: {a.role}, skills: {', '.join(a.skills or [])}): {a.description or 'No description'}"
+            for a in agents
+        )
+
+        # Query team members for assignee suggestions
+        tm_result = await db.execute(
+            select(TeamMember).where(TeamMember.project_id == project_id)
+        )
+        members = list(tm_result.scalars().all())
+
+        member_descriptions = "\n".join(
+            f"- Member {m.user_id[:8]} (role: {m.role}, skills: {', '.join(m.skills or [])}, capacity: {m.capacity}, current_load: {m.current_load})"
+            for m in members
+        ) or "No team members assigned."
+
+        prompt = f"""You are an orchestration agent. Generate a detailed execution plan for this task.
+
+Task: {task_title}
+Description: {task_description}
+
+Available Agents:
+{agent_descriptions or "No agents currently online."}
+
+Team Members:
+{member_descriptions}
+
+Available skills: generate_code, review_code, debug_code, refactor_code, explain_code, check_security, suggest_improvements, design_component
+
+Respond ONLY with a JSON object (no markdown, no extra text) with these fields:
+{{
+  "summary": "Brief 1-2 sentence summary of the plan",
+  "subtasks": [
+    {{"title": "Step title", "skill": "skill_name", "priority": 1}}
+  ],
+  "selected_agent": "Name of the best agent for this task",
+  "selected_agent_reason": "Why this agent is the best fit",
+  "suggested_assignee": "Name or role of the person who should oversee",
+  "suggested_assignee_reason": "Why this person should oversee the task",
+  "alternatives_considered": [
+    {{"agent": "Agent name", "reason": "Why this agent was not selected"}}
+  ],
+  "estimated_hours": 8
+}}"""
+
+        plan_data: dict[str, Any] = {}
+        rationale = ""
+
+        try:
+            response = await litellm.acompletion(
+                model=settings.default_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                api_key=settings.anthropic_api_key,
+            )
+
+            content = response.choices[0].message.content or "{}"
+
+            # Strip markdown fences if present
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+
+            plan_data = json.loads(content.strip())
+            rationale = (
+                f"Selected {plan_data.get('selected_agent', 'unknown agent')}: "
+                f"{plan_data.get('selected_agent_reason', 'No reason provided.')}"
+            )
+
+        except Exception as e:
+            logger.warning("LLM plan generation failed, using fallback: %s", e)
+            # Fallback: build plan from available agents
+            selected = agents[0] if agents else None
+            others = agents[1:3] if len(agents) > 1 else []
+
+            plan_data = {
+                "summary": f"Execute '{task_title}' using available agents.",
+                "subtasks": [{"title": task_title, "skill": "generate_code", "priority": 1}],
+                "selected_agent": selected.name if selected else "None available",
+                "selected_agent_reason": (
+                    f"{selected.name} is online with skills: {', '.join(selected.skills or [])}."
+                    if selected else "No agents are currently online."
+                ),
+                "suggested_assignee": members[0].role if members else "Unassigned",
+                "suggested_assignee_reason": (
+                    f"Has skills: {', '.join(members[0].skills or [])}."
+                    if members else "No team members available."
+                ),
+                "alternatives_considered": [
+                    {"agent": a.name, "reason": f"Also available with skills: {', '.join(a.skills or [])}."}
+                    for a in others
+                ],
+                "estimated_hours": 8,
+            }
+            rationale = f"Fallback plan: {plan_data['selected_agent_reason']}"
+
+        # Persist the plan
+        plan_id = str(uuid4())
+        plan = Plan(
+            id=plan_id,
+            task_id=task_id,
+            project_id=project_id,
+            plan_data=plan_data,
+            rationale=rationale,
+            status=PlanStatus.PENDING_PM_APPROVAL.value,
+        )
+        db.add(plan)
+
+        return {
+            "task_id": task_id,
+            "plan_id": plan_id,
+            "status": PlanStatus.PENDING_PM_APPROVAL.value,
+            "plan_data": plan_data,
+            "rationale": rationale,
         }
 
 

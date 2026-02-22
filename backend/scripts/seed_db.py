@@ -20,6 +20,7 @@ from src.storage.models import (
     Task,
     Plan,
     Subtask,
+    RiskSignal,
 )
 from src.core.state import (
     AgentStatus,
@@ -28,6 +29,8 @@ from src.core.state import (
     TaskStatus,
     PlanStatus,
     SubtaskStatus,
+    RiskSeverity,
+    RiskSource,
 )
 from src.api.auth import get_password_hash
 
@@ -409,7 +412,7 @@ async def seed_database():
         print(f"  Created 4 tasks")
 
         # ============== PLANS ==============
-        print("\n[7/7] Creating Plans and Subtasks...")
+        print("\n[7/8] Creating Plans and Subtasks...")
 
         # Plan for Task 2 (in progress)
         plan1_id = str(uuid4())
@@ -418,19 +421,34 @@ async def seed_database():
             task_id=task2_id,
             project_id=project1_id,
             plan_data={
+                "summary": "Build a React product catalog with filtering, sorting, and pagination in 4 subtasks.",
                 "subtasks": [
                     {
                         "title": "Create ProductCard component",
-                        "agent_type": "designer",
+                        "skill": "design_component",
                         "priority": 1,
                     },
-                    {"title": "Implement filtering logic", "agent_type": "coder", "priority": 2},
-                    {"title": "Add pagination component", "agent_type": "designer", "priority": 3},
-                    {"title": "Write unit tests", "agent_type": "coder", "priority": 4},
+                    {"title": "Implement filtering logic", "skill": "generate_code", "priority": 2},
+                    {"title": "Add pagination component", "skill": "design_component", "priority": 3},
+                    {"title": "Write unit tests", "skill": "generate_code", "priority": 4},
+                ],
+                "selected_agent": "Claude Frontend Expert",
+                "selected_agent_reason": "Has design_component and generate_code skills, specializes in React + TailwindCSS which matches the project's frontend stack.",
+                "suggested_assignee": "Charlie Developer",
+                "suggested_assignee_reason": "Charlie has React, TypeScript, and TailwindCSS skills with 100% capacity available — ideal for a frontend-heavy task.",
+                "alternatives_considered": [
+                    {
+                        "agent": "Claude Code Assistant",
+                        "reason": "General-purpose coder but lacks specialized design_component skill for UI work.",
+                    },
+                    {
+                        "agent": "DevOps Pro Agent",
+                        "reason": "Focuses on infrastructure and CI/CD, not suitable for frontend component development.",
+                    },
                 ],
                 "estimated_hours": 16,
             },
-            rationale="Breaking down the product catalog into reusable components for better maintainability.",
+            rationale="Selected Claude Frontend Expert: specializes in React + TailwindCSS which matches the project's frontend stack.",
             status=PlanStatus.APPROVED.value,
             approved_by_id=pm_id,
         )
@@ -482,24 +500,97 @@ async def seed_database():
             task_id=task3_id,
             project_id=project1_id,
             plan_data={
+                "summary": "Comprehensive security audit of the payment module covering input validation, SQL injection, auth flow, and encryption.",
                 "subtasks": [
-                    {"title": "Review input validation", "agent_type": "reviewer", "priority": 1},
-                    {"title": "Check for SQL injection", "agent_type": "reviewer", "priority": 1},
-                    {"title": "Audit authentication flow", "agent_type": "reviewer", "priority": 2},
+                    {"title": "Review input validation", "skill": "check_security", "priority": 1},
+                    {"title": "Check for SQL injection", "skill": "check_security", "priority": 1},
+                    {"title": "Audit authentication flow", "skill": "review_code", "priority": 2},
+                    {"title": "Review encryption handling", "skill": "check_security", "priority": 2},
+                ],
+                "selected_agent": "Claude Security Reviewer",
+                "selected_agent_reason": "Dedicated security agent with check_security and review_code skills, trained on OWASP guidelines for vulnerability detection.",
+                "suggested_assignee": "Bob Developer",
+                "suggested_assignee_reason": "Bob has Python, FastAPI, and PostgreSQL skills — familiar with the backend stack where the payment module lives.",
+                "alternatives_considered": [
                     {
-                        "title": "Review encryption handling",
-                        "agent_type": "reviewer",
-                        "priority": 2,
+                        "agent": "Claude Code Assistant",
+                        "reason": "General coder with review_code skill but lacks specialized security training.",
+                    },
+                    {
+                        "agent": "Qwen3 Research Assistant",
+                        "reason": "Research-focused agent, not equipped for code-level security analysis.",
                     },
                 ],
                 "estimated_hours": 8,
             },
-            rationale="Comprehensive security review following OWASP guidelines.",
+            rationale="Selected Claude Security Reviewer: dedicated security agent trained on OWASP guidelines for vulnerability detection.",
             status=PlanStatus.PENDING_PM_APPROVAL.value,
         )
         session.add(plan2)
 
         print(f"  Created 2 plans with subtasks")
+
+        # ============== RISK SIGNALS ==============
+        print("\n[8/8] Creating Risk Signals...")
+
+        risk1 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task2_id,
+            source=RiskSource.REVIEWER.value,
+            severity=RiskSeverity.MEDIUM.value,
+            title="Missing input validation in product filter endpoint",
+            description="The /products?category= endpoint accepts unsanitized query parameters that are passed directly to the database query.",
+            rationale="Reviewer Agent detected that the filter parameters in the product catalog API are interpolated into the query without validation or parameterization, which could allow unexpected values.",
+            recommended_action="Add Pydantic input validation to the filter query parameters and use parameterized queries for all database access in the product catalog endpoint.",
+            is_resolved=False,
+        )
+        session.add(risk1)
+
+        risk2 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task3_id,
+            source=RiskSource.REVIEWER.value,
+            severity=RiskSeverity.HIGH.value,
+            title="SQL injection risk in search query builder",
+            description="The search endpoint constructs SQL queries using string concatenation with user-supplied search terms.",
+            rationale="Reviewer Agent found that the search_products() function in services/products.py uses f-strings to build WHERE clauses, which is a classic SQL injection vector.",
+            recommended_action="Replace string concatenation with SQLAlchemy's parameterized query builder. Use .where(Product.name.ilike(f'%{term}%')) instead of raw SQL strings.",
+            is_resolved=False,
+        )
+        session.add(risk2)
+
+        risk3 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task2_id,
+            source=RiskSource.CI_FAILURE.value,
+            severity=RiskSeverity.LOW.value,
+            title="Flaky test in ProductCard snapshot suite",
+            description="The ProductCard.test.tsx snapshot test fails intermittently due to a date-dependent render.",
+            rationale="CI logs show the test passes on retry, indicating a non-deterministic dependency on Date.now() in the component's 'Added X days ago' label.",
+            recommended_action="Mock Date.now() in the test setup to ensure deterministic snapshots.",
+            is_resolved=True,
+        )
+        session.add(risk3)
+
+        risk4 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task2_id,
+            subtask_id=subtask2.id,
+            source=RiskSource.MERGE_CONFLICT.value,
+            severity=RiskSeverity.MEDIUM.value,
+            title="Conflicting changes in ProductFilter component",
+            description="Two branches modified the FilterBar component simultaneously — one adding price range and another adding category filters.",
+            rationale="Git detected overlapping changes in src/components/FilterBar.tsx between the price-range and category-filter branches.",
+            recommended_action="Coordinate merge order: land the category filter branch first (smaller diff), then rebase the price range branch on top.",
+            is_resolved=False,
+        )
+        session.add(risk4)
+
+        print(f"  Created 4 risk signals")
 
         # ============== COMMIT ==============
         await session.commit()
@@ -522,6 +613,7 @@ async def seed_database():
         print(f"  - {len(platform_agents)} Platform Agents + {len(seller_agents)} Seller Agent")
         print(f"  - 4 Tasks")
         print(f"  - 2 Plans with subtasks")
+        print(f"  - 4 Risk Signals (reviewer, CI, merge conflict)")
 
 
 if __name__ == "__main__":
