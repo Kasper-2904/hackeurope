@@ -10,6 +10,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    allowedHosts: ['unifai.marsilux.com'],
     proxy: {
       '/api': {
         target: apiProxyTarget,
