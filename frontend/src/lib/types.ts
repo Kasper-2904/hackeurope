@@ -281,6 +281,26 @@ export interface MarketplacePublishRequest {
   skills?: string[];
 }
 
+export interface MarketplacePublishResponse {
+  // Normal publish response (same as MarketplaceAgent fields)
+  id?: string;
+  agent_id?: string;
+  seller_id?: string;
+  seller_name?: string | null;
+  name?: string;
+  category?: string;
+  description?: string | null;
+  pricing_type?: PricingType;
+  price_per_use?: number | null;
+  is_verified?: boolean;
+  is_active?: boolean;
+  // Onboarding required response
+  onboarding_required?: boolean;
+  onboarding_url?: string;
+  stripe_account_id?: string;
+  message?: string;
+}
+
 export interface Plan {
   id: string;
   task_id: string;

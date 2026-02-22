@@ -10,6 +10,7 @@ import type {
   DeveloperDashboard,
   MarketplaceAgent,
   MarketplacePublishRequest,
+  MarketplacePublishResponse,
   Plan,
   Project,
   RiskSignal,
@@ -221,8 +222,20 @@ export async function getMarketplaceAgent(id: string): Promise<MarketplaceAgent 
   }
 }
 
-export async function publishAgent(agentData: MarketplacePublishRequest): Promise<MarketplaceAgent> {
-  const { data } = await apiClient.post<MarketplaceAgent>('/marketplace/publish', agentData)
+export async function publishAgent(
+  agentData: MarketplacePublishRequest,
+  options?: { returnUrl?: string; refreshUrl?: string }
+): Promise<MarketplacePublishResponse> {
+  const params = new URLSearchParams()
+  if (options?.returnUrl) {
+    params.append('return_url', options.returnUrl)
+  }
+  if (options?.refreshUrl) {
+    params.append('refresh_url', options.refreshUrl)
+  }
+  const queryString = params.toString()
+  const url = queryString ? `/marketplace/publish?${queryString}` : '/marketplace/publish'
+  const { data } = await apiClient.post<MarketplacePublishResponse>(url, agentData)
   return data
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +67,48 @@ export default function MarketplacePage() {
   const [formSkills, setFormSkills] = useState("");
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
+  // Handle return from Stripe onboarding
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const onboardingStatus = urlParams.get("onboarding");
+    
+    if (onboardingStatus === "complete") {
+      // User returned from Stripe onboarding, try to restore and publish
+      const pendingPublishStr = sessionStorage.getItem("pendingPublish");
+      if (pendingPublishStr) {
+        try {
+          const pendingData = JSON.parse(pendingPublishStr);
+          // Restore form fields
+          setFormName(pendingData.name || "");
+          setFormCategory(pendingData.category || "Development");
+          setFormDescription(pendingData.description || "");
+          setFormPricing(pendingData.pricing_type || "free");
+          setFormPrice(pendingData.price_per_use?.toString() || "");
+          setFormProvider(pendingData.inference_provider || "openai-compatible");
+          setFormEndpoint(pendingData.inference_endpoint || "");
+          setFormToken(pendingData.access_token || "");
+          setFormModel(pendingData.inference_model || "");
+          setFormSystemPrompt(pendingData.system_prompt || "");
+          setFormSkills(pendingData.skills?.join(", ") || "");
+          // Open dialog and show message
+          setDialogOpen(true);
+          setPublishMessage("Stripe setup complete! Click 'Publish Agent' to finish publishing.");
+        } catch {
+          // Invalid stored data
+        }
+        // Clear the stored data
+        sessionStorage.removeItem("pendingPublish");
+      }
+      // Clean up URL
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (onboardingStatus === "refresh") {
+      // User needs to restart onboarding
+      setPublishMessage("Stripe setup was not completed. Please try publishing again.");
+      sessionStorage.removeItem("pendingPublish");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
   // Fetch projects for selected team
   const { data: projects } = useQuery<Project[]>({
     queryKey: ["team-projects", selectedTeam],
@@ -107,22 +149,54 @@ export default function MarketplacePage() {
     }
 
     setPublishMessage(null);
+
+    // For paid agents, we need to provide onboarding URLs
+    const isPaidAgent = formPricing === "usage_based" && parseFloat(formPrice) > 0;
+    const currentUrl = window.location.href;
+    const returnUrl = isPaidAgent ? `${currentUrl}?onboarding=complete` : undefined;
+    const refreshUrl = isPaidAgent ? `${currentUrl}?onboarding=refresh` : undefined;
+
     publishMutation.mutate(
       {
-        name: formName.trim(),
-        category: formCategory,
-        description: formDescription.trim() || undefined,
-        pricing_type: formPricing as PricingType,
-        price_per_use: formPricing === "usage_based" ? parseFloat(formPrice) || 0 : null,
-        inference_provider: formProvider,
-        inference_endpoint: formEndpoint.trim(),
-        access_token: formToken.trim(),
-        inference_model: formModel.trim() || undefined,
-        system_prompt: formSystemPrompt.trim() || undefined,
-        skills: formSkills.split(",").map((s) => s.trim()).filter(Boolean),
+        agentData: {
+          name: formName.trim(),
+          category: formCategory,
+          description: formDescription.trim() || undefined,
+          pricing_type: formPricing as PricingType,
+          price_per_use: formPricing === "usage_based" ? parseFloat(formPrice) || 0 : null,
+          inference_provider: formProvider,
+          inference_endpoint: formEndpoint.trim(),
+          access_token: formToken.trim(),
+          inference_model: formModel.trim() || undefined,
+          system_prompt: formSystemPrompt.trim() || undefined,
+          skills: formSkills.split(",").map((s) => s.trim()).filter(Boolean),
+        },
+        options: isPaidAgent ? { returnUrl, refreshUrl } : undefined,
       },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          // Check if onboarding is required (for paid agents without Stripe Connect)
+          if (response.onboarding_required && response.onboarding_url) {
+            setPublishMessage("Redirecting to Stripe to set up payments...");
+            // Store form data in sessionStorage so we can restore after onboarding
+            sessionStorage.setItem("pendingPublish", JSON.stringify({
+              name: formName.trim(),
+              category: formCategory,
+              description: formDescription.trim(),
+              pricing_type: formPricing,
+              price_per_use: formPricing === "usage_based" ? parseFloat(formPrice) || 0 : null,
+              inference_provider: formProvider,
+              inference_endpoint: formEndpoint.trim(),
+              access_token: formToken.trim(),
+              inference_model: formModel.trim(),
+              system_prompt: formSystemPrompt.trim(),
+              skills: formSkills.split(",").map((s) => s.trim()).filter(Boolean),
+            }));
+            // Redirect to Stripe onboarding
+            window.location.href = response.onboarding_url;
+            return;
+          }
+          // Normal success - agent was published
           setDialogOpen(false);
           resetForm();
         },

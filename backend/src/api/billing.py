@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import uuid4
 
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +65,9 @@ async def get_billing_summary(
             func.coalesce(func.sum(UsageRecord.cost), 0.0),
         )
         .select_from(UsageRecord)
-        .join(MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True)
+        .join(
+            MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True
+        )
         .where(UsageRecord.team_id == team_id)
         .group_by(UsageRecord.marketplace_agent_id, MarketplaceAgent.name)
         .order_by(func.sum(UsageRecord.cost).desc(), UsageRecord.marketplace_agent_id.asc())
@@ -82,7 +85,9 @@ async def get_billing_summary(
     recent_usage_result = await db.execute(
         select(UsageRecord, MarketplaceAgent.name)
         .select_from(UsageRecord)
-        .join(MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True)
+        .join(
+            MarketplaceAgent, MarketplaceAgent.id == UsageRecord.marketplace_agent_id, isouter=True
+        )
         .where(UsageRecord.team_id == team_id)
         .order_by(UsageRecord.created_at.desc(), UsageRecord.id.desc())
         .limit(20)
@@ -141,23 +146,69 @@ async def create_subscription(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
     stripe_service = get_stripe_service()
+    settings = get_settings()
 
-    # TODO: Replace with actual Stripe price ID from environment/config
-    price_id = "price_1dummy"
+    price_id = settings.stripe_price_seat
+    if not price_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stripe seat price is not configured. Set STRIPE_PRICE_SEAT environment variable.",
+        )
 
     try:
+        if price_id.startswith("prod_"):
+            # The env var is a product ID, find the active recurring price
+            prices = stripe.Price.list(
+                product=price_id,
+                active=True,
+                type="recurring",  # Ensure we get a subscription-compatible price
+                limit=10,
+            )
+            if not prices.data:
+                # Fallback: try to find any active price
+                prices = stripe.Price.list(product=price_id, active=True, limit=10)
+
+            if not prices.data:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"No active price found for product {price_id}. Create a price in Stripe Dashboard.",
+                )
+
+            # Prefer recurring prices for subscriptions
+            recurring_prices = [p for p in prices.data if p.type == "recurring"]
+            if recurring_prices:
+                price_id = recurring_prices[0].id
+            else:
+                # Use the first available price
+                price_id = prices.data[0].id
+
+        # Validate the price exists and determine checkout mode
+        price = stripe.Price.retrieve(price_id)
+        checkout_mode = "subscription" if price.type == "recurring" else "payment"
+
         checkout_url = stripe_service.create_checkout_session(
             team_id=team.id,
             price_id=price_id,
             success_url=str(req.success_url),
             cancel_url=str(req.cancel_url),
+            mode=checkout_mode,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except stripe.InvalidRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid Stripe configuration: {str(exc)}",
+        ) from exc
+    except stripe.StripeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stripe error: {str(exc)}",
+        ) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Unable to create checkout session",
+            detail=f"Unable to create checkout session: {str(exc)}",
         ) from exc
 
     return SubscriptionCreateResponse(checkout_url=checkout_url, team_id=team.id)
@@ -389,14 +440,18 @@ async def get_usage(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
         team_ids = [team_id]
     else:
-        teams_result = await db.execute(
-            select(Team.id).where(Team.owner_id == current_user.id)
-        )
+        teams_result = await db.execute(select(Team.id).where(Team.owner_id == current_user.id))
         team_ids = [row[0] for row in teams_result.all()]
         team_ids.append(f"user_{current_user.id}")
 
     if not team_ids:
-        return {"records": [], "total_count": 0, "total_cost": 0.0, "today_count": 0, "daily_limit": 0}
+        return {
+            "records": [],
+            "total_count": 0,
+            "total_cost": 0.0,
+            "today_count": 0,
+            "daily_limit": 0,
+        }
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # Marketplace & Billing
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    stripe_price_seat: str = ""
     paid_api_key: str = ""
     paid_product_id: str = ""
     paid_webhook_secret: str = ""
@@ -63,7 +64,7 @@ class Settings(BaseSettings):
     free_tier_daily_limit: int = 10
 
     # Token pricing (cost per million tokens, USD)
-    anthropic_input_cost_per_m: float = 3.0   # Sonnet input
+    anthropic_input_cost_per_m: float = 3.0  # Sonnet input
     anthropic_output_cost_per_m: float = 15.0  # Sonnet output
 
 

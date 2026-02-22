@@ -1,7 +1,7 @@
 """Marketplace API routes."""
 
 from typing import Annotated, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
@@ -25,13 +25,14 @@ marketplace_router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 
 @marketplace_router.post(
     "/publish",
-    response_model=MarketplaceAgentResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def publish_agent(
     publish_data: AgentPublishRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    return_url: Optional[str] = Query(None, description="Return URL after Stripe onboarding"),
+    refresh_url: Optional[str] = Query(None, description="Refresh URL for Stripe onboarding"),
 ):
     """
     Publish a seller-hosted agent to the marketplace.
@@ -40,7 +41,89 @@ async def publish_agent(
     - inference_endpoint: URL of their hosted agent
     - access_token: Token for the platform to authenticate with their agent
     - skills: List of skills the agent provides
+
+    For PAID agents:
+    - If seller has no Stripe Connect account, returns onboarding_required with URL
+    - If seller has incomplete Connect account, returns onboarding_required with URL
+    - Requires return_url and refresh_url query params for onboarding flow
     """
+    # For paid agents, check seller's Stripe Connect status first
+    if (
+        publish_data.pricing_type == PricingType.USAGE_BASED
+        and publish_data.price_per_use
+        and publish_data.price_per_use > 0
+    ):
+        # Check if seller has a valid Stripe Connect account
+        result = await db.execute(
+            select(SellerProfile).where(SellerProfile.user_id == current_user.id)
+        )
+        seller_profile = result.scalar_one_or_none()
+
+        needs_onboarding = False
+        stripe_service = get_stripe_service()
+
+        if not seller_profile or not seller_profile.stripe_account_id:
+            needs_onboarding = True
+        else:
+            # Check if the account is fully set up for payouts
+            try:
+                account_status = stripe_service.get_account_status(seller_profile.stripe_account_id)
+                if not account_status.get("charges_enabled") or not account_status.get(
+                    "details_submitted"
+                ):
+                    needs_onboarding = True
+            except Exception:
+                needs_onboarding = True
+
+        if needs_onboarding:
+            # Seller needs to complete Stripe Connect onboarding
+            if not return_url or not refresh_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Paid agents require Stripe Connect setup. Provide return_url and refresh_url query parameters.",
+                )
+
+            try:
+                if not seller_profile or not seller_profile.stripe_account_id:
+                    # Create new Connect account
+                    account_id = stripe_service.create_connect_account(
+                        user_id=current_user.id, email=current_user.email
+                    )
+
+                    # Create or update seller profile
+                    if seller_profile:
+                        seller_profile.stripe_account_id = account_id
+                    else:
+                        seller_profile = SellerProfile(
+                            id=str(uuid.uuid4()),
+                            user_id=current_user.id,
+                            stripe_account_id=account_id,
+                        )
+                        db.add(seller_profile)
+
+                    await db.commit()
+                else:
+                    account_id = seller_profile.stripe_account_id
+
+                # Create onboarding link
+                onboarding_url = stripe_service.create_account_link(
+                    account_id=account_id,
+                    refresh_url=refresh_url,
+                    return_url=return_url,
+                )
+
+                return {
+                    "onboarding_required": True,
+                    "onboarding_url": onboarding_url,
+                    "stripe_account_id": account_id,
+                    "message": "Complete Stripe Connect onboarding to publish paid agents",
+                }
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create Stripe Connect onboarding: {str(e)}",
+                )
+
     service = get_marketplace_service()
     try:
         marketplace_agent = await service.publish_agent(
@@ -58,7 +141,8 @@ async def publish_agent(
             system_prompt=publish_data.system_prompt,
             skills=publish_data.skills,
         )
-        return marketplace_agent
+        # Return the marketplace agent in response format
+        return MarketplaceAgentResponse.model_validate(marketplace_agent)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

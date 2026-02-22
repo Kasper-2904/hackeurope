@@ -224,9 +224,15 @@ export function useReviewerFindings(projectId: string) {
 export function usePublishAgent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: publishAgent,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+    mutationFn: (args: {
+      agentData: Parameters<typeof publishAgent>[0];
+      options?: Parameters<typeof publishAgent>[1];
+    }) => publishAgent(args.agentData, args.options),
+    onSuccess: (data) => {
+      // Only invalidate if it was an actual publish (not onboarding redirect)
+      if (!data.onboarding_required) {
+        queryClient.invalidateQueries({ queryKey: ["marketplace"] });
+      }
     },
   });
 }
