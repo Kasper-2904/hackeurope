@@ -143,6 +143,50 @@ class TaskScheduler:
                 task.status = TaskStatus.COMPLETED
                 task.progress = 1.0
                 task.result = result
+
+                draft_text = result.get("result") or ""
+                if not draft_text:
+                    steps = result.get("steps") or []
+                    parts = []
+                    for i, s in enumerate(steps, 1):
+                        skill = s.get("skill", "step")
+                        res = s.get("result", "")
+                        if res:
+                            parts.append(f"## Step {i}: {skill}\n{res}")
+                    draft_text = "\n\n".join(parts)
+                if not draft_text:
+                    draft_text = "Orchestration completed (no text output)."
+
+                draft_payload = {
+                    "output": draft_text,
+                    "type": "orchestrator_output",
+                }
+
+                sub_result = await session.execute(
+                    select(Subtask)
+                    .where(Subtask.task_id == task.id)
+                    .order_by(Subtask.created_at)
+                    .limit(1)
+                )
+                first_subtask = sub_result.scalar_one_or_none()
+                if first_subtask:
+                    first_subtask.draft_content = draft_payload
+                    first_subtask.status = "draft_generated"
+                    first_subtask.draft_generated_at = datetime.utcnow()
+                else:
+                    from uuid import uuid4
+
+                    new_subtask = Subtask(
+                        id=str(uuid4()),
+                        task_id=task.id,
+                        title="Orchestrator Output",
+                        description="Auto-generated from orchestrator execution",
+                        priority=1,
+                        status="draft_generated",
+                        draft_content=draft_payload,
+                        draft_generated_at=datetime.utcnow(),
+                    )
+                    session.add(new_subtask)
             else:
                 task.status = TaskStatus.FAILED
                 task.error = result.get("error")
@@ -242,6 +286,7 @@ class TaskScheduler:
                     else:
                         # No subtask exists — create one to hold the draft
                         from uuid import uuid4
+
                         new_subtask = Subtask(
                             id=str(uuid4()),
                             task_id=task_id,

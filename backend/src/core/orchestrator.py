@@ -515,6 +515,19 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
 
     # Prepare skill inputs — merge task_description into input_data
     enriched_input = {**input_data, "description": state.get("task_description", "")}
+
+    # For review-type skills, also include shared context in inputs
+    shared_ctx = state.get("shared_context", "")
+    review_skills = [
+        "review_code",
+        "suggest_improvements",
+        "explain_code",
+        "check_security",
+        "refactor_code",
+    ]
+    if shared_ctx and skill_name in review_skills:
+        enriched_input["context"] = shared_ctx
+
     skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
 
     # Build system prompt with shared context for the specialist agent
@@ -698,6 +711,7 @@ def _prepare_skill_inputs(skill_name: str, input_data: dict[str, Any]) -> dict[s
         return {
             "code": input_data.get("code", ""),
             "task": description,
+            "context": input_data.get("context", ""),
         }
 
     if skill_name == "debug_code":
@@ -711,6 +725,35 @@ def _prepare_skill_inputs(skill_name: str, input_data: dict[str, Any]) -> dict[s
         return {
             "code": input_data.get("code", ""),
             "instructions": input_data.get("instructions", "") or description,
+            "context": input_data.get("context", ""),
+        }
+
+    if skill_name == "suggest_improvements":
+        return {
+            "code": input_data.get("code", ""),
+            "design": input_data.get("design", ""),
+            "task": description,
+            "context": input_data.get("context", ""),
+        }
+
+    if skill_name == "explain_code":
+        return {
+            "code": input_data.get("code", ""),
+            "task": description,
+            "context": input_data.get("context", ""),
+        }
+
+    if skill_name == "check_security":
+        return {
+            "code": input_data.get("code", ""),
+            "task": description,
+            "context": input_data.get("context", ""),
+        }
+
+    if skill_name == "design_component":
+        return {
+            "requirements": input_data.get("requirements", "") or description,
+            "task": description,
         }
 
     # Default: pass everything including description

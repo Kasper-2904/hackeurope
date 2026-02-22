@@ -1,7 +1,7 @@
 """Configuration management for the agent orchestrator platform."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,9 +37,9 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     default_llm_model: str = "claude-sonnet-4-20250514"
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
-    crusoe_api_key: str | None = None
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    crusoe_api_key: Optional[str] = None
     crusoe_api_base: str = "https://hackeurope.crusoecloud.com/v1"
 
     # MCP Configuration

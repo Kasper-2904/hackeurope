@@ -27,7 +27,7 @@ from src.storage.models import AuditLog, Subtask, User, Task
 subtasks_router = APIRouter(prefix="/subtasks", tags=["Subtasks"])
 
 
-@subtasks_router.get("", response_model=list[SubtaskResponse])
+@subtasks_router.get("", response_model=list[SubtaskDetail])
 async def list_subtasks(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
