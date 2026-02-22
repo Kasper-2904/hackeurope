@@ -776,6 +776,13 @@ async def seed_database():
         # ============== COMMIT ==============
         await session.commit()
 
+        # ============== REFRESH SHARED CONTEXT FILES ==============
+        from src.services.context_service import SharedContextService
+
+        context_service = SharedContextService()
+        refreshed = await context_service.refresh_context_files(project1_id, session)
+        print(f"\nRefreshed {len(refreshed)} shared context files from seeded data")
+
         print("\n" + "=" * 50)
         print("Database seeded successfully!")
         print("=" * 50)

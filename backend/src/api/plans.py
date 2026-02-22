@@ -82,13 +82,27 @@ async def generate_plan(
         )
 
     orchestrator = get_orchestrator()
-    result_data = await orchestrator.generate_plan(
+    result = await orchestrator.execute_task(
         task_id=task.id,
-        task_title=task.title,
-        task_description=task.description or "",
+        task_type="plan_generation",
+        description=task.description or "",
+        input_data={"task_title": task.title},
         project_id=plan_data.project_id,
-        db=db,
+        user_id=current_user.id,
+        team_id=task.team_id,
     )
+
+    # Persist a Plan row from orchestrator output
+    plan_id = str(uuid4())
+    plan = Plan(
+        id=plan_id,
+        task_id=task.id,
+        project_id=plan_data.project_id,
+        plan_data={"steps": result.get("plan", []), "result": result.get("result")},
+        rationale=result.get("result"),
+        status=PlanStatus.PENDING_PM_APPROVAL.value,
+    )
+    db.add(plan)
 
     # Track usage
     try:
@@ -103,7 +117,14 @@ async def generate_plan(
         logger.warning("Usage tracking failed in plan generation: %s", e)
 
     await db.commit()
-    return result_data
+    return {
+        "task_id": task.id,
+        "plan_id": plan_id,
+        "status": result.get("status", "completed"),
+        "plan_data": plan.plan_data,
+        "rationale": plan.rationale,
+        "error": result.get("error"),
+    }
 
 
 @plans_router.post("/{plan_id}/approve", response_model=PlanResponse)

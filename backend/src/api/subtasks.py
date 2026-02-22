@@ -143,7 +143,12 @@ async def finalize_subtask(
 
 
 async def _run_subtask_orchestration(
-    subtask_id: str, task_id: str, title: str, description: str, current_user_id: str
+    subtask_id: str,
+    task_id: str,
+    title: str,
+    description: str,
+    current_user_id: str,
+    project_id: str | None = None,
 ):
     """Background task to run the orchestrator for a specific subtask."""
     from src.storage.database import AsyncSessionLocal
@@ -157,6 +162,7 @@ async def _run_subtask_orchestration(
             task_type="subtask_execution",
             description=f"{title}\n{description}",
             user_id=current_user_id,
+            project_id=project_id,
         )
 
         # Update subtask status based on orchestrator result
@@ -208,6 +214,12 @@ async def dispatch_subtask(
     task_result = await db.execute(select(Task).where(Task.id == subtask.task_id))
     parent_task = task_result.scalar_one_or_none()
 
+    if not parent_task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parent task not found for subtask",
+        )
+
     # Update status to indicate agent is working on it
     subtask.draft_agent_id = subtask.assigned_agent_id
 
@@ -218,10 +230,11 @@ async def dispatch_subtask(
     background_tasks.add_task(
         _run_subtask_orchestration,
         subtask_id=subtask.id,
-        task_id=parent_task.id if parent_task else str(uuid4()),
+        task_id=parent_task.id,
         title=subtask.title,
         description=subtask.description or "",
         current_user_id=current_user.id,
+        project_id=parent_task.project_id,
     )
 
     return subtask
