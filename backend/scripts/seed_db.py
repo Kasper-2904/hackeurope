@@ -446,19 +446,34 @@ async def seed_database():
             task_id=task2_id,
             project_id=project1_id,
             plan_data={
+                "summary": "Build a React product catalog with filtering, sorting, and pagination in 4 subtasks.",
                 "subtasks": [
                     {
                         "title": "Create ProductCard component",
-                        "agent_type": "designer",
+                        "skill": "design_component",
                         "priority": 1,
                     },
-                    {"title": "Implement filtering logic", "agent_type": "coder", "priority": 2},
-                    {"title": "Add pagination component", "agent_type": "designer", "priority": 3},
-                    {"title": "Write unit tests", "agent_type": "coder", "priority": 4},
+                    {"title": "Implement filtering logic", "skill": "generate_code", "priority": 2},
+                    {"title": "Add pagination component", "skill": "design_component", "priority": 3},
+                    {"title": "Write unit tests", "skill": "generate_code", "priority": 4},
+                ],
+                "selected_agent": "Claude Frontend Expert",
+                "selected_agent_reason": "Has design_component and generate_code skills, specializes in React + TailwindCSS which matches the project's frontend stack.",
+                "suggested_assignee": "Charlie Developer",
+                "suggested_assignee_reason": "Charlie has React, TypeScript, and TailwindCSS skills with 100% capacity available — ideal for a frontend-heavy task.",
+                "alternatives_considered": [
+                    {
+                        "agent": "Claude Code Assistant",
+                        "reason": "General-purpose coder but lacks specialized design_component skill for UI work.",
+                    },
+                    {
+                        "agent": "DevOps Pro Agent",
+                        "reason": "Focuses on infrastructure and CI/CD, not suitable for frontend component development.",
+                    },
                 ],
                 "estimated_hours": 16,
             },
-            rationale="Breaking down the product catalog into reusable components for better maintainability.",
+            rationale="Selected Claude Frontend Expert: specializes in React + TailwindCSS which matches the project's frontend stack.",
             status=PlanStatus.APPROVED.value,
             approved_by_id=pm_id,
         )
@@ -510,19 +525,30 @@ async def seed_database():
             task_id=task3_id,
             project_id=project1_id,
             plan_data={
+                "summary": "Comprehensive security audit of the payment module covering input validation, SQL injection, auth flow, and encryption.",
                 "subtasks": [
-                    {"title": "Review input validation", "agent_type": "reviewer", "priority": 1},
-                    {"title": "Check for SQL injection", "agent_type": "reviewer", "priority": 1},
-                    {"title": "Audit authentication flow", "agent_type": "reviewer", "priority": 2},
+                    {"title": "Review input validation", "skill": "check_security", "priority": 1},
+                    {"title": "Check for SQL injection", "skill": "check_security", "priority": 1},
+                    {"title": "Audit authentication flow", "skill": "review_code", "priority": 2},
+                    {"title": "Review encryption handling", "skill": "check_security", "priority": 2},
+                ],
+                "selected_agent": "Claude Security Reviewer",
+                "selected_agent_reason": "Dedicated security agent with check_security and review_code skills, trained on OWASP guidelines for vulnerability detection.",
+                "suggested_assignee": "Bob Developer",
+                "suggested_assignee_reason": "Bob has Python, FastAPI, and PostgreSQL skills — familiar with the backend stack where the payment module lives.",
+                "alternatives_considered": [
                     {
-                        "title": "Review encryption handling",
-                        "agent_type": "reviewer",
-                        "priority": 2,
+                        "agent": "Claude Code Assistant",
+                        "reason": "General coder with review_code skill but lacks specialized security training.",
+                    },
+                    {
+                        "agent": "Qwen3 Research Assistant",
+                        "reason": "Research-focused agent, not equipped for code-level security analysis.",
                     },
                 ],
                 "estimated_hours": 8,
             },
-            rationale="Comprehensive security review following OWASP guidelines.",
+            rationale="Selected Claude Security Reviewer: dedicated security agent trained on OWASP guidelines for vulnerability detection.",
             status=PlanStatus.PENDING_PM_APPROVAL.value,
         )
         session.add(plan2)
@@ -620,7 +646,34 @@ async def seed_database():
             resolved_by_id=dev1_id,
         )
         session.add(risk3)
-        print(f"  Created 3 risk signals (1 resolved, 2 open)")
+
+        risk4 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task2_id,
+            source=RiskSource.REVIEWER.value,
+            severity=RiskSeverity.MEDIUM.value,
+            title="Missing input validation in product filter endpoint",
+            description="The /products?category= endpoint accepts unsanitized query parameters passed directly to the database query.",
+            rationale="Reviewer Agent detected that filter parameters in the product catalog API are interpolated into the query without validation or parameterization.",
+            recommended_action="Add Pydantic input validation to filter query parameters and use parameterized queries for all database access.",
+        )
+        session.add(risk4)
+
+        risk5 = RiskSignal(
+            id=str(uuid4()),
+            project_id=project1_id,
+            task_id=task3_id,
+            source=RiskSource.REVIEWER.value,
+            severity=RiskSeverity.HIGH.value,
+            title="Unencrypted PII in payment audit log",
+            description="The payment module logs full card holder names and email addresses to the audit trail without masking.",
+            rationale="Reviewer Agent found that audit_payment() in services/payments.py logs raw customer data, violating PCI-DSS requirement 3.4 for masking PAN and PII.",
+            recommended_action="Mask PII fields before logging — truncate names to initials and redact email domains. Add a sanitize_for_audit() helper.",
+        )
+        session.add(risk5)
+
+        print(f"  Created 5 risk signals (1 resolved, 4 open)")
 
         # ============== AUDIT LOGS ==============
         print("\n[12/14] Creating Audit Logs...")
