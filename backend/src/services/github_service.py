@@ -276,6 +276,14 @@ class GitHubService:
 
     def __init__(self, provider: GitHubDataProvider | None = None):
         self._provider = provider or MockGitHubProvider()
+        # Lazy import to avoid circular dependency
+        self._context_service = None
+
+    def _get_context_service(self):
+        if self._context_service is None:
+            from src.services.context_service import SharedContextService
+            self._context_service = SharedContextService()
+        return self._context_service
 
     async def sync_project(self, project_id: str, db: AsyncSession) -> dict[str, Any]:
         """Sync GitHub data for a project. Returns summary stats."""
@@ -377,12 +385,22 @@ class GitHubService:
         await db.commit()
         await db.refresh(ctx)
 
+        # Auto-refresh shared context MD files from updated DB state
+        context_files_refreshed = 0
+        try:
+            context_service = self._get_context_service()
+            refreshed = await context_service.refresh_context_files(project_id, db)
+            context_files_refreshed = len(refreshed)
+        except Exception as e:
+            logger.warning("Failed to refresh shared context files after sync: %s", e)
+
         return {
             "project_id": project_id,
             "pull_requests_count": len(prs),
             "commits_count": len(commits),
             "ci_checks_count": len(ci_checks),
             "risks_created": risks_created,
+            "context_files_refreshed": context_files_refreshed,
             "last_synced_at": now,
         }
 

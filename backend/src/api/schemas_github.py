@@ -66,6 +66,7 @@ class GitHubSyncResponse(BaseModel):
     commits_count: int
     ci_checks_count: int
     risks_created: int
+    context_files_refreshed: int = 0
     last_synced_at: datetime
 
 

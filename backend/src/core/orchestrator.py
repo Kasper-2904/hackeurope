@@ -10,6 +10,7 @@ The orchestrator:
 """
 
 import json
+import logging
 import litellm
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,6 +26,8 @@ from src.core.state import AgentStatus, TaskStatus
 from src.services.agent_inference import get_inference_service
 from src.storage.database import AsyncSessionLocal as async_session_factory
 from src.storage.models import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestratorState(TypedDict, total=False):
@@ -57,6 +60,70 @@ class OrchestratorState(TypedDict, total=False):
     user_id: str | None
     team_id: str | None
     subtask_id: str | None
+    project_id: str | None
+    shared_context: str | None  # Rendered shared context injected before planning
+
+
+async def _load_shared_context(project_id: str | None) -> str:
+    """Sync GitHub data (if stale) and load shared context for a project.
+
+    Checks if GitHub context is fresh (synced within 5 min TTL).
+    If stale, triggers a fresh sync. Then gathers all shared context
+    (project info, GitHub PRs/commits/CI, tasks, risks, team, agents)
+    and renders it as a single markdown string for the LLM prompt.
+    """
+    if not project_id:
+        return ""
+
+    try:
+        from datetime import timezone
+
+        from src.services.context_service import SharedContextService
+        from src.services.github_service import GitHubService
+        from src.storage.models import GitHubContext
+
+        async with async_session_factory() as session:
+            # Check if context is fresh (synced within last 5 minutes)
+            ctx_result = await session.execute(
+                select(GitHubContext).where(GitHubContext.project_id == project_id)
+            )
+            existing_ctx = ctx_result.scalar_one_or_none()
+            needs_sync = True
+            if existing_ctx and existing_ctx.last_synced_at:
+                age = (datetime.now(timezone.utc) - existing_ctx.last_synced_at).total_seconds()
+                if age < 300:  # 5 minute TTL
+                    needs_sync = False
+                    logger.info("Skipping GitHub sync — context is %ds old (TTL 300s)", int(age))
+
+            if needs_sync:
+                github_service = GitHubService()
+                try:
+                    await github_service.sync_project(project_id, session)
+                except Exception as e:
+                    logger.warning("GitHub sync failed during context load: %s", e)
+
+            # Gather full shared context from DB + refreshed MD files
+            context_service = SharedContextService()
+            ctx = await context_service.gather_context(project_id, session)
+
+        # Render context dict into a single markdown block for the prompt
+        parts = []
+        for key in ("project_overview", "integrations_github", "task_graph",
+                     "team_members", "hosted_agents"):
+            content = ctx.get(key, "")
+            if content and content.strip():
+                parts.append(content.strip())
+
+        # Add live DB risk signals
+        risks = ctx.get("open_risks", [])
+        if risks:
+            risk_lines = [f"- [{r['severity']}] {r['title']}: {r['description']}" for r in risks]
+            parts.append("# Open Risk Signals\n" + "\n".join(risk_lines))
+
+        return "\n\n---\n\n".join(parts) if parts else ""
+    except Exception as e:
+        logger.warning("Failed to load shared context for project %s: %s", project_id, e)
+        return ""
 
 
 async def analyze_task(state: OrchestratorState) -> OrchestratorState:
@@ -65,6 +132,7 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
 
     task_type = state.get("task_type", "")
     description = state.get("task_description", "")
+    project_id = state.get("project_id")
 
     settings = get_settings()
 
@@ -81,15 +149,26 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
         )
     )
 
+    # Load shared context (triggers GitHub sync + context refresh)
+    shared_context = await _load_shared_context(project_id)
+    context_block = ""
+    if shared_context:
+        context_block = f"""
+
+    === PROJECT CONTEXT ===
+    {shared_context}
+    === END PROJECT CONTEXT ===
+    """
+
     prompt = f"""
     You are an orchestration agent. Analyze this task and break it down into skills to execute.
-    
+    {context_block}
     Task Type: {task_type}
     Description: {description}
-    
-    Available skills: generate_code, review_code, debug_code, refactor_code, explain_code, 
+
+    Available skills: generate_code, review_code, debug_code, refactor_code, explain_code,
     check_security, suggest_improvements, design_component
-    
+
     Respond ONLY with a JSON array of skill names in execution order.
     Example: ["generate_code"]
     """
@@ -136,6 +215,7 @@ async def analyze_task(state: OrchestratorState) -> OrchestratorState:
         "current_step": 0,
         "step_results": [],
         "status": "planning",
+        "shared_context": shared_context,
     }
 
 
@@ -283,12 +363,25 @@ async def execute_skill(state: OrchestratorState) -> OrchestratorState:
         enriched_input = {**input_data, "description": state.get("task_description", "")}
         skill_inputs = _prepare_skill_inputs(skill_name, enriched_input)
 
+        # Build system prompt with shared context for the specialist agent
+        base_prompt = agent.system_prompt or ""
+        shared_ctx = state.get("shared_context", "")
+        if shared_ctx:
+            system_prompt = (
+                f"{base_prompt}\n\n"
+                f"=== PROJECT CONTEXT ===\n"
+                f"{shared_ctx}\n"
+                f"=== END PROJECT CONTEXT ==="
+            ) if base_prompt else shared_ctx
+        else:
+            system_prompt = base_prompt or None
+
         # Execute skill via inference service
         result_text, _token_usage = await inference_service.execute_skill(
             agent=agent,
             skill=skill_name,
             inputs=skill_inputs,
-            system_prompt=agent.system_prompt,
+            system_prompt=system_prompt,
         )
 
     # Record the result
@@ -481,6 +574,7 @@ class Orchestrator:
         team_id: str | None = None,
         user_id: str | None = None,
         subtask_id: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Execute a task through the orchestration pipeline."""
         initial_state: OrchestratorState = {
@@ -500,6 +594,8 @@ class Orchestrator:
             "team_id": team_id,
             "user_id": user_id,
             "subtask_id": subtask_id,
+            "project_id": project_id,
+            "shared_context": None,
         }
 
         final_state = await self._compiled.ainvoke(initial_state)
