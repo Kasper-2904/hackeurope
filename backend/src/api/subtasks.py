@@ -1,12 +1,15 @@
 """Subtask routing endpoints."""
 
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.api.auth import get_current_user
 from src.api.schemas import (
@@ -143,7 +146,12 @@ async def finalize_subtask(
 
 
 async def _run_subtask_orchestration(
-    subtask_id: str, task_id: str, title: str, description: str, current_user_id: str
+    subtask_id: str,
+    task_id: str,
+    title: str,
+    description: str,
+    current_user_id: str,
+    project_id: str | None = None,
 ):
     """Background task to run the orchestrator for a specific subtask."""
     from src.storage.database import AsyncSessionLocal
@@ -157,6 +165,7 @@ async def _run_subtask_orchestration(
             task_type="subtask_execution",
             description=f"{title}\n{description}",
             user_id=current_user_id,
+            project_id=project_id,
         )
 
         # Update subtask status based on orchestrator result
@@ -170,11 +179,11 @@ async def _run_subtask_orchestration(
                 elif orch_status in ("completed", "completed_with_errors"):
                     subtask.status = SubtaskStatus.DRAFT_GENERATED
                     subtask.draft_content = result.get("final_result", "")
-                    subtask.draft_generated_at = datetime.utcnow()
+                    subtask.draft_generated_at = datetime.now(timezone.utc)
                 await session.commit()
 
     except Exception as e:
-        print(f"Error in background orchestration for subtask {subtask_id}: {e}")
+        logger.error("Error in background orchestration for subtask %s: %s", subtask_id, e)
         # Update subtask status to FAILED
         async with AsyncSessionLocal() as session:
             subtask_result = await session.execute(select(Subtask).where(Subtask.id == subtask_id))
@@ -208,6 +217,12 @@ async def dispatch_subtask(
     task_result = await db.execute(select(Task).where(Task.id == subtask.task_id))
     parent_task = task_result.scalar_one_or_none()
 
+    if not parent_task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parent task not found for subtask",
+        )
+
     # Update status to indicate agent is working on it
     subtask.draft_agent_id = subtask.assigned_agent_id
 
@@ -218,10 +233,11 @@ async def dispatch_subtask(
     background_tasks.add_task(
         _run_subtask_orchestration,
         subtask_id=subtask.id,
-        task_id=parent_task.id if parent_task else str(uuid4()),
+        task_id=parent_task.id,
         title=subtask.title,
         description=subtask.description or "",
         current_user_id=current_user.id,
+        project_id=parent_task.project_id,
     )
 
     return subtask

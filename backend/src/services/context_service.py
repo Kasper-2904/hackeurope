@@ -202,7 +202,8 @@ class SharedContextService:
                 conclusion = ci.get("conclusion") or ci.get("status", "unknown")
                 icon = {"success": "pass", "failure": "FAIL", "pending": "pending"}.get(conclusion, conclusion)
                 pr_ref = f" (PR #{ci['pr_number']})" if ci.get("pr_number") else ""
-                ci_lines.append(f"- **{ci['name']}**: {icon}{pr_ref}")
+                ci_name = ci.get("name") or ci.get("workflow", "check")
+                ci_lines.append(f"- **{ci_name}**: {icon}{pr_ref}")
             ci_md = "\n".join(ci_lines)
         else:
             ci_md = "_No CI checks recorded._"

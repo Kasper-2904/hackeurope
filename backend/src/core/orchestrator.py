@@ -649,6 +649,19 @@ async def aggregate_results(state: OrchestratorState) -> OrchestratorState:
         has_errors = any(r.get("error") for r in step_results)
         status = "completed" if not has_errors else "completed_with_errors"
 
+    # Write back to shared context so the next agent/orchestrator sees fresh state
+    project_id = state.get("project_id")
+    if project_id:
+        try:
+            from src.services.context_service import SharedContextService
+
+            async with async_session_factory() as session:
+                context_service = SharedContextService()
+                await context_service.refresh_context_files(project_id, session)
+            logger.info("Refreshed shared context files after task aggregation")
+        except Exception as e:
+            logger.warning("Failed to refresh shared context after aggregation: %s", e)
+
     await event_bus.publish(
         Event(
             type=EventType.TASK_COMPLETED,
