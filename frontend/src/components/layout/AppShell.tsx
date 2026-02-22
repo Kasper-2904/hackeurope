@@ -136,6 +136,9 @@ export function AppShell() {
 
             {/* Right Side - User Menu */}
             <div className="flex items-center gap-4">
+              <NavLink to="/connections" className={navLinkClass}>
+                Connections
+              </NavLink>
               <NavLink to="/billing" className={navLinkClass}>
                 Billing
               </NavLink>

@@ -17,6 +17,7 @@ import ProjectsPage from '@/pages/ProjectsPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
 import TaskListPage from '@/pages/TaskListPage'
+import ConnectionsPage from '@/pages/ConnectionsPage'
 import TeamDetailPage from '@/pages/TeamDetailPage'
 
 const queryClient = new QueryClient()
@@ -45,6 +46,7 @@ function App() {
                   <Route path="/marketplace" element={<MarketplacePage />} />
                   <Route path="/marketplace/:agentId" element={<AgentDetailPage />} />
                   <Route path="/context" element={<ContextExplorerPage />} />
+                  <Route path="/connections" element={<ConnectionsPage />} />
                   <Route path="/billing" element={<BillingPage />} />
                 </Route>
               </Route>
