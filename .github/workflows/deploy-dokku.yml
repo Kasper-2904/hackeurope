@@ -1,0 +1,85 @@
+name: Deploy to Dokku
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: dokku-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+    env:
+      DOKKU_HOST: ${{ secrets.DOKKU_HOST }}
+      DOKKU_SSH_USER: ${{ secrets.DOKKU_SSH_USER }}
+      DOKKU_API_APP: ${{ secrets.DOKKU_API_APP }}
+      DOKKU_WEB_APP: ${{ secrets.DOKKU_WEB_APP }}
+
+    steps:
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+          for var in DOKKU_HOST DOKKU_SSH_USER DOKKU_API_APP DOKKU_WEB_APP; do
+            if [ -z "${!var:-}" ]; then
+              echo "Missing required secret: $var"
+              exit 1
+            fi
+          done
+          if [ -z "${{ secrets.DOKKU_SSH_PRIVATE_KEY }}" ]; then
+            echo "Missing required secret: DOKKU_SSH_PRIVATE_KEY"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history is required for git subtree split/push.
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Prepare branch ref
+        run: |
+          set -euo pipefail
+          git checkout -B main
+
+      - name: Configure SSH for Dokku
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DOKKU_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DOKKU_HOST" >> ~/.ssh/known_hosts
+
+      - name: Configure Dokku remotes
+        run: |
+          set -euo pipefail
+          git remote add dokku-api "${DOKKU_SSH_USER}@${DOKKU_HOST}:${DOKKU_API_APP}"
+          git remote add dokku-web "${DOKKU_SSH_USER}@${DOKKU_HOST}:${DOKKU_WEB_APP}"
+
+      - name: Deploy backend
+        run: |
+          set -euo pipefail
+          git subtree push --prefix backend dokku-api main
+
+      - name: Seed backend database
+        run: |
+          set -euo pipefail
+          ssh "${DOKKU_SSH_USER}@${DOKKU_HOST}" "run ${DOKKU_API_APP} python scripts/seed_db.py"
+
+      - name: Deploy frontend
+        run: |
+          set -euo pipefail
+          git subtree push --prefix frontend dokku-web main
