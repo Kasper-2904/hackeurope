@@ -150,3 +150,75 @@
 - Description: Final UI polish, fix UX glitches, prepare demo runbook.
 - Acceptance Criteria:
   - Demo scenario is reproducible and documented.
+
+## Milestone 5: MVP Review Hardening
+
+### M5-T1 Marketplace Publish Flow Error Fix (owner: Martin)
+- Status: Todo
+- Description: Investigate and fix frontend publish flow errors shown in browser console when publishing an agent in the marketplace.
+- Acceptance Criteria:
+  - Publish flow completes without uncaught frontend console errors.
+  - Error states shown to users are actionable and non-technical.
+
+### M5-T2 PM Approval Must Trigger Task Assignment (owner: Kasper)
+- Status: Todo
+- Description: Fix orchestration transition so PM plan approval reliably starts assignment/execution flow.
+- Acceptance Criteria:
+  - Approving a plan moves it into active assignment/execution state.
+  - Backend tests cover approve -> assign transition.
+
+### M5-T3 Context Page Real OA Reasoning (owner: Martin)
+- Status: Todo
+- Description: Replace mock context page data with OA reasoning/rationale from real backend responses.
+- Acceptance Criteria:
+  - Context page renders persisted OA reasoning data, not static mocks.
+  - Empty/error states are handled for missing reasoning entries.
+
+### M5-T4 Real-Time OA Reasoning Logs in Frontend (owner: Marin)
+- Status: Todo
+- Description: Add real-time reasoning/action log updates in frontend task/detail views.
+- Acceptance Criteria:
+  - Reasoning/action logs stream incrementally during orchestration runs.
+  - UI clearly distinguishes in-progress vs completed reasoning steps.
+
+### M5-T5 OA Must Load Shared Context Before Planning (owner: Kasper)
+- Status: Todo
+- Description: Ensure OA planning reads canonical shared context sources before generating assignments/plans.
+- Acceptance Criteria:
+  - OA planning requests include shared context inputs from configured sources.
+  - Tests verify plans change when shared context input changes.
+
+### M5-T6 Failed Subagent Runs Mark Task Failed (owner: Farhan)
+- Status: Todo
+- Description: Propagate subagent execution failures to task status so tasks become `failed` instead of hanging in active states.
+- Acceptance Criteria:
+  - Subagent hard failure updates task status to `failed`.
+  - Failure reason is persisted for PM/developer visibility.
+
+### M5-T7 Subtasks Execute with Same Lifecycle Guarantees as Tasks (owner: Farhan)
+- Status: Todo
+- Description: Align subtask execution lifecycle/state transitions with main task execution behavior.
+- Acceptance Criteria:
+  - Subtasks support same status lifecycle and retries as tasks (where applicable).
+  - Integration test covers task + subtask coordinated execution.
+
+### M5-T8 PM Can Create Tasks via Tasks API Flow (owner: Marin)
+- Status: Todo
+- Description: Enable PM creation flow wired to `POST /api/v1/tasks` with proper frontend entry point and role handling.
+- Acceptance Criteria:
+  - PM can create a task end-to-end from UI/API flow.
+  - Authorization and validation errors are surfaced clearly.
+
+### M5-T9 Paid.ai Token Usage Billing for LLM Calls (owner: Kasper)
+- Status: Todo
+- Description: Extend usage metering to include token-based LLM call billing events, not only tool-call events.
+- Acceptance Criteria:
+  - Token usage per LLM call is captured and emitted to Paid.ai payloads.
+  - Billing summary reflects token-driven usage costs.
+
+### M5-T10 GitHub Sync Must Auto-Refresh Shared Context Files (owner: Farhan)
+- Status: Todo
+- Description: Ensure GitHub ingestion automatically refreshes internal context and populates canonical `docs/shared_context/*.md` context files.
+- Acceptance Criteria:
+  - GitHub sync updates shared context state without manual intervention.
+  - Canonical shared context markdown files are populated from latest sync data.
