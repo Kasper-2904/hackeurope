@@ -1,6 +1,7 @@
 """SharedContextService — reads/writes docs/shared_context/*.md and enriches with DB data."""
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,28 @@ logger = logging.getLogger(__name__)
 
 # Resolve shared context dir relative to the repo root (two levels up from backend/src/)
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
-_SHARED_CONTEXT_DIR = _BACKEND_DIR.parent / "docs" / "shared_context"
+
+
+def _resolve_shared_context_dir() -> Path:
+    """Resolve context dir for both local monorepo and deployed subtree layouts."""
+    explicit = os.getenv("SHARED_CONTEXT_DIR")
+    if explicit:
+        return Path(explicit)
+
+    candidates = [
+        # Local monorepo run from backend/: <repo>/docs/shared_context
+        _BACKEND_DIR.parent / "docs" / "shared_context",
+        # Dokku subtree deployment: /app/docs/shared_context
+        _BACKEND_DIR / "docs" / "shared_context",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    # Fall back to deployed layout; write path is created on demand.
+    return candidates[1]
+
+
+_SHARED_CONTEXT_DIR = _resolve_shared_context_dir()
 
 
 class SharedContextService:
