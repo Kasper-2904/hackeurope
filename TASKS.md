@@ -247,3 +247,27 @@
 - Acceptance Criteria:
   - GitHub sync updates shared context state without manual intervention.
   - Canonical shared context markdown files are populated from latest sync data.
+
+### M5-T11 OA Must Wait for PM Start Signal Before Execution (owner: Marin)
+- Status: Todo
+- Description: Ensure new tasks first generate an OA implementation plan, then pause for PM approval/start signal before any implementation agents begin execution.
+- Acceptance Criteria:
+  - Creating a new task triggers OA planning first and stores a plan artifact before execution starts.
+  - No implementation agent execution begins until PM provides explicit approval/start signal.
+  - After PM start signal, full task implementation flow transitions to active execution automatically.
+
+### M5-T12 Shared Context Files Must Be Visible in Frontend (owner: Kasper)
+- Status: Todo
+- Description: Add a clean, user-friendly UI view that surfaces files from `docs/shared_context` so teams can inspect current shared context in-app.
+- Acceptance Criteria:
+  - Frontend includes a dedicated shared context view that lists files from `docs/shared_context`.
+  - Users can open and read shared context file contents with clear loading, empty, and error states.
+  - UI is accessible and consistent with existing app navigation/layout patterns.
+
+### M5-T13 Marketplace Stripe Onboarding and Subscribe Flows Must Work (owner: Farhan)
+- Status: Todo
+- Description: Fix Stripe regressions where seller onboarding is not triggered on agent publish and project subscription flow is failing.
+- Acceptance Criteria:
+  - Publishing an agent triggers seller onboarding flow when required and returns actionable status to frontend.
+  - Project subscription flow completes successfully end-to-end for valid Stripe checkout cases.
+  - Backend tests cover publish->onboarding trigger behavior and successful subscription creation path.
