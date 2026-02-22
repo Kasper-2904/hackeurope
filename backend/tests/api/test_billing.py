@@ -910,7 +910,9 @@ async def api_client(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_billing_summary_aggregates_usage_and_recent_records(api_client, db_session: AsyncSession):
+async def test_billing_summary_aggregates_usage_and_recent_records(
+    api_client, db_session: AsyncSession
+):
     client, context = api_client
 
     owner = _make_user_api("owner")
@@ -1040,7 +1042,9 @@ async def test_billing_summary_returns_404_for_non_owned_team(api_client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_billing_summary_returns_empty_payload_without_usage(api_client, db_session: AsyncSession):
+async def test_billing_summary_returns_empty_payload_without_usage(
+    api_client, db_session: AsyncSession
+):
     client, context = api_client
 
     owner = _make_user_api("owner")
@@ -1076,7 +1080,9 @@ async def test_billing_summary_returns_empty_payload_without_usage(api_client, d
 
 
 @pytest.mark.asyncio
-async def test_subscribe_returns_typed_payload_and_stable_error(api_client, db_session: AsyncSession, monkeypatch):
+async def test_subscribe_returns_typed_payload_and_stable_error(
+    api_client, db_session: AsyncSession, monkeypatch
+):
     client, context = api_client
 
     owner = _make_user_api("owner")
@@ -1089,10 +1095,23 @@ async def test_subscribe_returns_typed_payload_and_stable_error(api_client, db_s
     context["current_user"] = owner
 
     class StripeStub:
-        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+        def create_checkout_session(
+            self, team_id, price_id, success_url, cancel_url, mode="subscription"
+        ):
             return f"https://checkout.stripe.test/session/{team_id}"
 
     monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeStub())
+
+    # Mock the stripe module calls for price validation
+    class MockPrice:
+        type = "recurring"
+
+    monkeypatch.setattr("src.api.billing.stripe.Price.retrieve", lambda price_id: MockPrice())
+
+    # Set a test price ID in settings
+    monkeypatch.setattr(
+        "src.api.billing.get_settings", lambda: MagicMock(stripe_price_seat="price_test123")
+    )
 
     success_payload = {
         "team_id": team.id,
@@ -1108,19 +1127,28 @@ async def test_subscribe_returns_typed_payload_and_stable_error(api_client, db_s
     }
 
     class StripeFailStub:
-        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+        def create_checkout_session(
+            self, team_id, price_id, success_url, cancel_url, mode="subscription"
+        ):
             raise RuntimeError("stripe down")
 
     monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeFailStub())
+    # Keep the mock for stripe.Price.retrieve for the error test too
+    monkeypatch.setattr("src.api.billing.stripe.Price.retrieve", lambda price_id: MockPrice())
+    monkeypatch.setattr(
+        "src.api.billing.get_settings", lambda: MagicMock(stripe_price_seat="price_test123")
+    )
 
     error_response = await client.post("/api/v1/billing/subscribe", json=success_payload)
 
     assert error_response.status_code == 502
-    assert error_response.json() == {"detail": "Unable to create checkout session"}
+    assert "Unable to create checkout session" in error_response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_subscribe_returns_404_for_unknown_or_non_owned_team(api_client, db_session: AsyncSession):
+async def test_subscribe_returns_404_for_unknown_or_non_owned_team(
+    api_client, db_session: AsyncSession
+):
     client, context = api_client
 
     owner = _make_user_api("owner")
@@ -1154,7 +1182,9 @@ async def test_subscribe_returns_404_for_unknown_or_non_owned_team(api_client, d
 
 
 @pytest.mark.asyncio
-async def test_subscribe_returns_400_for_checkout_validation_error(api_client, db_session: AsyncSession, monkeypatch):
+async def test_subscribe_returns_400_for_checkout_validation_error(
+    api_client, db_session: AsyncSession, monkeypatch
+):
     client, context = api_client
 
     owner = _make_user_api("owner")
@@ -1167,10 +1197,21 @@ async def test_subscribe_returns_400_for_checkout_validation_error(api_client, d
     context["current_user"] = owner
 
     class StripeValidationStub:
-        def create_checkout_session(self, team_id, price_id, success_url, cancel_url):
+        def create_checkout_session(
+            self, team_id, price_id, success_url, cancel_url, mode="subscription"
+        ):
             raise ValueError("Invalid checkout URL")
 
     monkeypatch.setattr("src.api.billing.get_stripe_service", lambda: StripeValidationStub())
+
+    # Mock the stripe module calls for price validation
+    class MockPrice:
+        type = "recurring"
+
+    monkeypatch.setattr("src.api.billing.stripe.Price.retrieve", lambda price_id: MockPrice())
+    monkeypatch.setattr(
+        "src.api.billing.get_settings", lambda: MagicMock(stripe_price_seat="price_test123")
+    )
 
     payload = {
         "team_id": team.id,

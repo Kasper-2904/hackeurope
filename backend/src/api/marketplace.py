@@ -1,24 +1,23 @@
 """Marketplace API routes."""
 
+import uuid
 from typing import Annotated, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.auth import get_current_user
-from src.storage.database import get_db
-from src.storage.models import User
-from src.services.marketplace_service import get_marketplace_service
-from src.services.stripe_service import get_stripe_service
 from src.api.schemas_marketplace import (
     AgentPublishRequest,
-    MarketplaceAgentResponse,
     AgentSubscribeRequest,
-    AgentSubscriptionResponse,
+    MarketplaceAgentResponse,
 )
-from src.storage.models import User, Team, MarketplaceAgent, AgentSubscription, SellerProfile
 from src.core.state import PricingType, SubscriptionStatus
-from sqlalchemy import select
-import uuid
+from src.services.marketplace_service import get_marketplace_service
+from src.services.stripe_service import get_stripe_service
+from src.storage.database import get_db
+from src.storage.models import AgentSubscription, MarketplaceAgent, SellerProfile, Team, User
 
 marketplace_router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 

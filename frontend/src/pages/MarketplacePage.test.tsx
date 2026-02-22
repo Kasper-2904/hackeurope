@@ -126,7 +126,7 @@ describe("MarketplacePage", () => {
           inference_endpoint: "https://agent.example.com/v1",
           access_token: "secret-token",
         }),
-        expect.anything(),
+        undefined, // Free agents don't need onboarding URLs
       );
     });
   });
